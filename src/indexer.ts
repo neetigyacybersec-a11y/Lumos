@@ -1,7 +1,7 @@
 import { TFile, Notice } from 'obsidian';
 import RelationPlugin from './main';
 import { RELATION_VIEW_TYPE, RelationSidebarView } from './sidebarView';
-import { hashString } from './utils';
+import { hashString, isPathIgnored } from './utils';
 import { IndexingProgressUI } from './progressUi';
 const pdfParse = require('pdf-parse');
 
@@ -26,6 +26,7 @@ export class BackgroundIndexer {
             const ext = file.extension.toLowerCase();
             if (!['md', 'pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(ext)) continue;
             if (file.path === this.plugin.settings.userProfilePath) continue;
+            if (isPathIgnored(file.path, this.plugin.settings.ignoredFolders)) continue;
 
             if (!this.plugin.vectorStore.hasFile(file.path)) {
                 this.queue.push(file);
@@ -38,8 +39,6 @@ export class BackgroundIndexer {
             this.processedFiles = 0;
             this.progressUi.show(this.totalFiles);
             this.processQueue();
-        } else {
-            console.log('[RelationPlugin] Vault is fully indexed.');
         }
     }
 
@@ -60,6 +59,7 @@ export class BackgroundIndexer {
 
                 const ext = file.extension.toLowerCase();
                 let cleanText = '';
+                let madeNetworkCall = false;
 
                 if (ext === 'md') {
                     const parsed = await this.plugin.parser.parse(file);
@@ -78,6 +78,7 @@ export class BackgroundIndexer {
                         const hasText = await this.plugin.localOcr.hasText(file);
                         if (hasText) {
                             cleanText = await this.plugin.visionExtractor.extractImageText(file);
+                            madeNetworkCall = true;
                         } else {
                             continue;
                         }
@@ -95,10 +96,11 @@ export class BackgroundIndexer {
                 let firstEmbedding: number[] | null = null;
                 const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
                     const embedding = await this.plugin.embeddingPipeline.embed(text);
+                    madeNetworkCall = true;
                     if (i === 0) firstEmbedding = embedding;
                     return { id: `${file.path}#${i}`, filePath: file.path, text, embedding, contentHash };
                 }));
-                await this.plugin.vectorStore.upsert(file.path, vectorChunks);
+                await this.plugin.vectorStore.upsert(file.path, vectorChunks, true);
                 
                 // 3. Extract Relations (only if it has similar notes to compare to, and only for markdown files)
                 if (ext === 'md' && firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
@@ -107,6 +109,7 @@ export class BackgroundIndexer {
                         const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
                         const prompt = this.plugin.relationExtractor.constructPrompt(file.path, cleanText, candidates);
                         const { edges, profileInsights } = await this.plugin.relationExtractor.extractRelations(prompt, file.path);
+                        madeNetworkCall = true;
                         
                         if (profileInsights) {
                             await this.plugin.userProfileManager.addInsight(profileInsights);
@@ -124,7 +127,7 @@ export class BackgroundIndexer {
                             return edge;
                         });
 
-                        await this.plugin.relationStore.upsertEdges(file.path, scoredEdges);
+                        await this.plugin.relationStore.upsertEdges(file.path, scoredEdges, true);
                         
                         // Process Backlinks
                         await this.plugin.backlinkManager.processEdges(file, edges);
@@ -141,13 +144,21 @@ export class BackgroundIndexer {
             this.processedFiles++;
             this.progressUi.update(this.processedFiles, file.name);
 
-            // Sleep a bit to avoid locking the UI and hitting rate limits too hard
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            // Batch save every 10 files to avoid data loss while preventing I/O thrashing
+            if (this.processedFiles % 10 === 0) {
+                await this.plugin.vectorStore.forceSave();
+                await this.plugin.relationStore.forceSave();
+            }
+
+            // Sleep a bit to avoid hitting rate limits, but ONLY if we actually made a network call
+            if (madeNetworkCall) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+            }
         }
 
         // Final forced save once everything is queued
-        await this.plugin.vectorStore.save();
-        await this.plugin.relationStore.save();
+        await this.plugin.vectorStore.forceSave();
+        await this.plugin.relationStore.forceSave();
 
         // Ensure profile file exists so the user knows where it is
         const path = this.plugin.settings.userProfilePath;

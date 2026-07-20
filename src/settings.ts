@@ -166,6 +166,19 @@ export class RelationSettingTab extends PluginSettingTab {
 						}
 					}));
 		}
+
+		containerEl.createEl('h3', {text: 'Privacy & Exclusions', cls: 'setting-item-heading'});
+
+		new Setting(containerEl)
+			.setName('Ignored Folders')
+			.setDesc('Comma-separated list of folders that will NEVER be indexed or sent to cloud APIs (e.g., "Private, Secrets"). Paths containing these strings will be skipped.')
+			.addText(text => text
+				.setPlaceholder('Private, Secrets')
+				.setValue(this.plugin.settings.ignoredFolders)
+				.onChange(async (value) => {
+					this.plugin.settings.ignoredFolders = value;
+					await this.plugin.saveSettings();
+				}));
 	}
 
 	hide(): void {

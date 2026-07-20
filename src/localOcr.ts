@@ -27,14 +27,11 @@ export class LocalOcr {
             const clean = text.replace(/\s+/g, '').trim();
             
             if (clean.length < 10) {
-                console.log(`[LocalOcr] Skipping ${file.path}: Only found ${clean.length} characters (needs 10).`);
                 return false;
             }
             
-            console.log(`[LocalOcr] Text detected in ${file.path}. Proceeding to Vision LLM.`);
             return true;
         } catch (e) {
-            console.error('[LocalOcr] Tesseract failed, falling back to Vision LLM to be safe.', e);
             // If Tesseract fails for any reason (e.g., CDN blocked), fallback to true so we don't drop the image
             return true; 
         }

@@ -83,7 +83,6 @@ export class BacklinkManager {
                 // Remove duplicates just in case
                 frontmatter.ai_relations = [...new Set(frontmatter.ai_relations)];
             });
-            console.log(`[RelationPlugin] Injected ${newLinksToAdd.length} backlinks into ${sourceFile.path}`);
         } catch (e) {
             console.error(`[RelationPlugin] Failed to inject backlinks into ${sourceFile.path}`, e);
         }

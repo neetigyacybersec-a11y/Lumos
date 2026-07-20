@@ -8,3 +8,19 @@ export function hashString(str: string): string {
     }
     return hash.toString(36); // Short base36 string
 }
+
+export function isPathIgnored(path: string, ignoredFoldersStr: string): boolean {
+    if (!ignoredFoldersStr || ignoredFoldersStr.trim() === '') return false;
+    
+    const ignoredFolders = ignoredFoldersStr
+        .split(',')
+        .map(f => f.trim())
+        .filter(f => f.length > 0);
+        
+    for (const folder of ignoredFolders) {
+        if (path.includes(folder)) {
+            return true;
+        }
+    }
+    return false;
+}

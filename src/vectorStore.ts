@@ -33,34 +33,40 @@ export class VectorStore {
             clearTimeout(this.saveTimeout);
         }
         this.saveTimeout = setTimeout(async () => {
-            const manifestDir = this.plugin.manifest?.dir || '';
-            // In real environments, adapter.write handles file creation
-            // but for mocks we can just write it.
-            try {
-                await this.plugin.app.vault.adapter.write(`${manifestDir}/${this.dataFile}`, JSON.stringify(this.vectors));
-            } catch (e) {
-                console.error('Failed to save vectors', e);
-            }
+            await this.forceSave();
         }, 1000);
     }
 
-    async upsert(filePath: string, chunks: VectorChunk[]) {
+    async forceSave() {
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+            this.saveTimeout = null;
+        }
+        const manifestDir = this.plugin.manifest?.dir || '';
+        try {
+            await this.plugin.app.vault.adapter.write(`${manifestDir}/${this.dataFile}`, JSON.stringify(this.vectors));
+        } catch (e) {
+            console.error('Failed to save vectors', e);
+        }
+    }
+
+    async upsert(filePath: string, chunks: VectorChunk[], skipSave: boolean = false) {
         this.vectors = this.vectors.filter(v => v.filePath !== filePath);
         if (chunks.length > 0) {
             this.vectors.push(...chunks);
         }
-        await this.save();
+        if (!skipSave) await this.save();
     }
 
-    async delete(filePath: string) {
+    async delete(filePath: string, skipSave: boolean = false) {
         const initialLen = this.vectors.length;
         this.vectors = this.vectors.filter(v => v.filePath !== filePath);
-        if (this.vectors.length !== initialLen) {
+        if (this.vectors.length !== initialLen && !skipSave) {
             await this.save();
         }
     }
 
-    async renameFile(oldPath: string, newPath: string) {
+    async renameFile(oldPath: string, newPath: string, skipSave: boolean = false) {
         let changed = false;
         for (const v of this.vectors) {
             if (v.filePath === oldPath) {
@@ -69,12 +75,12 @@ export class VectorStore {
                 changed = true;
             }
         }
-        if (changed) await this.save();
+        if (changed && !skipSave) await this.save();
     }
 
-    async clear() {
+    async clear(skipSave: boolean = false) {
         this.vectors = [];
-        await this.save();
+        if (!skipSave) await this.save();
     }
 
     hasFile(filePath: string): boolean {
@@ -114,13 +120,10 @@ export class VectorStore {
 
 export function cosineSimilarity(a: number[], b: number[]): number {
     let dotProduct = 0;
-    let normA = 0;
-    let normB = 0;
     for (let i = 0; i < a.length; i++) {
         dotProduct += a[i] * b[i];
-        normA += a[i] * a[i];
-        normB += b[i] * b[i];
     }
-    if (normA === 0 || normB === 0) return 0;
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+    // Assuming embeddings are pre-normalized, the dot product is the cosine similarity.
+    // This avoids expensive Math.sqrt operations on the main UI thread.
+    return dotProduct;
 }

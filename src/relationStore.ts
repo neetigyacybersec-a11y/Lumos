@@ -21,6 +21,7 @@ export class RelationStore {
     private plugin: Plugin;
     private edges: RelationEdge[] = [];
     private dataFile = 'relations.json';
+    private saveTimeout: any = null;
 
     constructor(plugin: Plugin) {
         this.plugin = plugin;
@@ -37,11 +38,28 @@ export class RelationStore {
     }
 
     async save() {
-        const manifestDir = this.plugin.manifest?.dir || '';
-        await this.plugin.app.vault.adapter.write(`${manifestDir}/${this.dataFile}`, JSON.stringify(this.edges));
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+        }
+        this.saveTimeout = setTimeout(async () => {
+            await this.forceSave();
+        }, 1000);
     }
 
-    async upsertEdges(sourcePath: string, newEdges: RelationEdge[]) {
+    async forceSave() {
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+            this.saveTimeout = null;
+        }
+        const manifestDir = this.plugin.manifest?.dir || '';
+        try {
+            await this.plugin.app.vault.adapter.write(`${manifestDir}/${this.dataFile}`, JSON.stringify(this.edges));
+        } catch (e) {
+            console.error('Failed to save relations', e);
+        }
+    }
+
+    async upsertEdges(sourcePath: string, newEdges: RelationEdge[], skipSave: boolean = false) {
         // Preserve dismissed state
         const existingEdges = this.edges.filter(e => e.source === sourcePath);
         for (const newEdge of newEdges) {
@@ -53,18 +71,18 @@ export class RelationStore {
         
         this.edges = this.edges.filter(e => e.source !== sourcePath);
         this.edges.push(...newEdges);
-        await this.save();
+        if (!skipSave) await this.save();
     }
 
-    async deleteEdges(sourcePath: string) {
+    async deleteEdges(sourcePath: string, skipSave: boolean = false) {
         const initial = this.edges.length;
         this.edges = this.edges.filter(e => e.source !== sourcePath && e.target !== sourcePath);
-        if (this.edges.length !== initial) {
+        if (this.edges.length !== initial && !skipSave) {
             await this.save();
         }
     }
 
-    async dismissEdge(sourcePath: string, targetPath: string, relationType: string) {
+    async dismissEdge(sourcePath: string, targetPath: string, relationType: string, skipSave: boolean = false) {
         let changed = false;
         for (const e of this.edges) {
             if (e.source === sourcePath && e.target === targetPath && e.relationType === relationType) {
@@ -72,10 +90,10 @@ export class RelationStore {
                 changed = true;
             }
         }
-        if (changed) await this.save();
+        if (changed && !skipSave) await this.save();
     }
 
-    async renameFile(oldPath: string, newPath: string) {
+    async renameFile(oldPath: string, newPath: string, skipSave: boolean = false) {
         let changed = false;
         for (const e of this.edges) {
             if (e.source === oldPath) {
@@ -87,12 +105,12 @@ export class RelationStore {
                 changed = true;
             }
         }
-        if (changed) await this.save();
+        if (changed && !skipSave) await this.save();
     }
 
-    async clear() {
+    async clear(skipSave: boolean = false) {
         this.edges = [];
-        await this.save();
+        if (!skipSave) await this.save();
     }
 
     getEdgesForPath(path: string): RelationEdge[] {

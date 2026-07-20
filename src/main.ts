@@ -11,7 +11,7 @@ import { RelationExtractor } from './relations';
 import { RelationSidebarView, RELATION_VIEW_TYPE } from './sidebarView';
 import { BackgroundIndexer } from './indexer';
 import { BacklinkManager } from './backlinker';
-import { hashString } from './utils';
+import { hashString, isPathIgnored } from './utils';
 import { ScoringEngine } from './scoring';
 import { VisionExtractor } from './vision';
 import { LocalOcr } from './localOcr';
@@ -95,15 +95,15 @@ export default class RelationPlugin extends Plugin {
 
 		this.watcher.onReady(async (file: TFile) => {
 			if (file.path === this.settings.userProfilePath) return;
+			if (isPathIgnored(file.path, this.settings.ignoredFolders)) return;
 
 			const deleted = !(await this.app.vault.adapter.exists(file.path));
 			if (deleted) {
-				console.log(`[RelationPlugin] File deleted: ${file.path}`);
 				await this.vectorStore.delete(file.path);
 				await this.relationStore.deleteEdges(file.path);
 			} else {
 				const parsed = await this.parser.parse(file);
-				console.log(`[RelationPlugin] File ready: ${file.path}`, parsed);
+				console.log(`[RelationPlugin] File ready: ${file.path}`);
 				
 				const contentHash = hashString(parsed.cleanText);
 				if (this.vectorStore.getFileHash(file.path) === contentHash) {
@@ -129,7 +129,6 @@ export default class RelationPlugin extends Plugin {
 						};
 					}));
 					await this.vectorStore.upsert(file.path, vectorChunks);
-					console.log(`[RelationPlugin] Saved ${vectorChunks.length} embeddings for ${file.path}`);
 					
 					// Run Relation Extraction if we have embeddings
 					if (firstEmbedding && this.vectorStore.getFileCount() > 1) {
@@ -139,7 +138,6 @@ export default class RelationPlugin extends Plugin {
 							const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
 							const prompt = this.relationExtractor.constructPrompt(file.path, parsed.cleanText, candidates);
 							
-							console.log(`[RelationPlugin] Asking LLM for relations...`);
 							const { edges, profileInsights } = await this.relationExtractor.extractRelations(prompt, file.path);
 							
 							if (profileInsights) {
@@ -159,7 +157,6 @@ export default class RelationPlugin extends Plugin {
 							});
 
 							await this.relationStore.upsertEdges(file.path, scoredEdges);
-							console.log(`[RelationPlugin] Extracted ${scoredEdges.length} edges for ${file.path}`, scoredEdges);
 							
 							// Process Backlinks
 							await this.backlinkManager.processEdges(file, scoredEdges);
@@ -183,8 +180,8 @@ export default class RelationPlugin extends Plugin {
 			}
 		});
 
-		this.watcher.onRename(async (file: TFile, oldPath: string) => {
-			console.log(`[RelationPlugin] File renamed from ${oldPath} to ${file.path}`);
+		this.watcher.on('rename', async (file: TAbstractFile, oldPath: string) => {
+			if (!(file instanceof TFile)) return;
 			await this.vectorStore.renameFile(oldPath, file.path);
 			await this.relationStore.renameFile(oldPath, file.path);
 			this.activateView();

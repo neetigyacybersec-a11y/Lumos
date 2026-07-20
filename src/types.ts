@@ -13,6 +13,7 @@ export interface PluginSettings {
 	enableUserProfile: boolean;
 	userProfilePath: string;
 	userProfileWordThreshold: number;
+	ignoredFolders: string;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -27,6 +28,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	enableUserProfile: true,
 	userProfilePath: 'User_Profile_AI.md',
 	userProfileWordThreshold: 500,
+	ignoredFolders: 'Private, Secrets, .obsidian',
 }
 
 export interface QueuedFile {
