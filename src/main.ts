@@ -13,6 +13,9 @@ import { BackgroundIndexer } from './indexer';
 import { BacklinkManager } from './backlinker';
 import { hashString } from './utils';
 import { ScoringEngine } from './scoring';
+import { VisionExtractor } from './vision';
+import { LocalOcr } from './localOcr';
+import { SEARCH_VIEW_TYPE, SemanticSearchView } from './searchView';
 
 export default class RelationPlugin extends Plugin {
 	settings: PluginSettings;
@@ -25,6 +28,8 @@ export default class RelationPlugin extends Plugin {
 	indexer: BackgroundIndexer;
 	backlinkManager: BacklinkManager;
 	scoringEngine: ScoringEngine;
+	visionExtractor: VisionExtractor;
+	localOcr: LocalOcr;
 
 	async onload() {
 		console.log('obsidian-relation-plugin loaded');
@@ -35,9 +40,14 @@ export default class RelationPlugin extends Plugin {
 			RELATION_VIEW_TYPE,
 			(leaf) => new RelationSidebarView(leaf, this)
 		);
+		this.registerView(SEARCH_VIEW_TYPE, (leaf) => new SemanticSearchView(leaf, this));
 
-		this.addRibbonIcon('link', 'Open LLM Relations', () => {
+		this.addRibbonIcon('link', 'LLM Relations', () => {
 			this.activateView();
+		});
+		
+		this.addRibbonIcon('search', 'Semantic Search', () => {
+			this.activateSearchView();
 		});
 
 		this.addCommand({
@@ -65,6 +75,9 @@ export default class RelationPlugin extends Plugin {
 		this.relationExtractor = new RelationExtractor(this.settings);
 		this.backlinkManager = new BacklinkManager(this.app, this.settings);
 		this.scoringEngine = new ScoringEngine(this.app);
+		this.visionExtractor = new VisionExtractor(this.app, this.settings);
+		this.localOcr = new LocalOcr(this.app);
+		
 		this.indexer = new BackgroundIndexer(this);
 
 		this.app.workspace.onLayoutReady(() => {
@@ -178,6 +191,22 @@ export default class RelationPlugin extends Plugin {
 				await leaf.setViewState({ type: RELATION_VIEW_TYPE, active: true });
 			}
 		}
+		if (leaf) workspace.revealLeaf(leaf);
+	}
+
+	async activateSearchView() {
+		const { workspace } = this.app;
+		
+		let leaf = workspace.getLeavesOfType(SEARCH_VIEW_TYPE)[0];
+		
+		if (!leaf) {
+			const rightLeaf = workspace.getRightLeaf(false);
+			if (rightLeaf) {
+				await rightLeaf.setViewState({ type: SEARCH_VIEW_TYPE, active: true });
+				leaf = rightLeaf;
+			}
+		}
+		
 		if (leaf) workspace.revealLeaf(leaf);
 	}
 

@@ -2,6 +2,7 @@ import { TFile, Notice } from 'obsidian';
 import RelationPlugin from './main';
 import { RELATION_VIEW_TYPE, RelationSidebarView } from './sidebarView';
 import { hashString } from './utils';
+const pdfParse = require('pdf-parse');
 
 export class BackgroundIndexer {
     plugin: RelationPlugin;
@@ -13,10 +14,13 @@ export class BackgroundIndexer {
     }
 
     async start() {
-        const files = this.plugin.app.vault.getMarkdownFiles();
+        const files = this.plugin.app.vault.getFiles();
         let added = 0;
         
         for (const file of files) {
+            const ext = file.extension.toLowerCase();
+            if (!['md', 'pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(ext)) continue;
+
             if (!this.plugin.vectorStore.hasFile(file.path)) {
                 this.queue.push(file);
                 added++;
@@ -45,12 +49,40 @@ export class BackgroundIndexer {
                     continue;
                 }
 
-                // 1. Parse
-                const parsed = await this.plugin.parser.parse(file);
+                const ext = file.extension.toLowerCase();
+                let cleanText = '';
+
+                if (ext === 'md') {
+                    const parsed = await this.plugin.parser.parse(file);
+                    cleanText = parsed.cleanText;
+                } else if (ext === 'pdf') {
+                    try {
+                        const buffer = await this.plugin.app.vault.readBinary(file);
+                        const data = await pdfParse(Buffer.from(buffer));
+                        cleanText = data.text;
+                    } catch (e) {
+                        console.error(`Failed to parse PDF ${file.path}`, e);
+                        continue;
+                    }
+                } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
+                    try {
+                        const hasText = await this.plugin.localOcr.hasText(file);
+                        if (hasText) {
+                            cleanText = await this.plugin.visionExtractor.extractImageText(file);
+                        } else {
+                            continue;
+                        }
+                    } catch (e) {
+                        console.error(`Failed OCR on Image ${file.path}`, e);
+                        continue;
+                    }
+                }
+
+                if (!cleanText || cleanText.trim() === '') continue;
                 
                 // 2. Embed
-                const contentHash = hashString(parsed.cleanText);
-                const chunks = this.plugin.embeddingPipeline.chunkText(parsed.cleanText);
+                const contentHash = hashString(cleanText);
+                const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
                 let firstEmbedding: number[] | null = null;
                 const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
                     const embedding = await this.plugin.embeddingPipeline.embed(text);
@@ -59,12 +91,12 @@ export class BackgroundIndexer {
                 }));
                 await this.plugin.vectorStore.upsert(file.path, vectorChunks);
                 
-                // 3. Extract Relations (only if it has similar notes to compare to)
-                if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
+                // 3. Extract Relations (only if it has similar notes to compare to, and only for markdown files)
+                if (ext === 'md' && firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
                     const similar = this.plugin.vectorStore.querySimilar(firstEmbedding, 3, file.path);
                     if (similar.length > 0) {
                         const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
-                        const prompt = this.plugin.relationExtractor.constructPrompt(file.path, parsed.cleanText, candidates);
+                        const prompt = this.plugin.relationExtractor.constructPrompt(file.path, cleanText, candidates);
                         const edges = await this.plugin.relationExtractor.extractRelations(prompt, file.path);
                         
                         // Compute final scores

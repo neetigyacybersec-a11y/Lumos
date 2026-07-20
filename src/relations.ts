@@ -51,7 +51,7 @@ CRITICAL RULES:
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model: this.settings.modelName || 'llama3',
+                    model: this.settings.llmModelName || 'llama3',
                     prompt: prompt,
                     stream: false,
                     format: 'json'
@@ -70,7 +70,7 @@ CRITICAL RULES:
                     'Authorization': `Bearer ${this.settings.apiKey}`
                 },
                 body: JSON.stringify({
-                    model: this.settings.modelName || 'meta-llama/llama-3-8b-instruct',
+                    model: this.settings.llmModelName || 'meta-llama/llama-3-8b-instruct',
                     messages: [{ role: 'user', content: prompt }]
                 })
             });

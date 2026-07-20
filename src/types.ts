@@ -3,7 +3,8 @@ import { TFile } from 'obsidian';
 export interface PluginSettings {
 	provider: 'ollama' | 'openrouter';
 	baseUrl: string;
-	modelName: string;
+	llmModelName: string;
+	visionModelName: string;
 	embeddingModelName: string;
 	apiKey?: string;
 	autoAddBacklinks: boolean;
@@ -14,8 +15,9 @@ export interface PluginSettings {
 export const DEFAULT_SETTINGS: PluginSettings = {
 	provider: 'ollama',
 	baseUrl: 'http://localhost:11434',
-	modelName: '',
-	embeddingModelName: '',
+	llmModelName: 'openai/gpt-4o-mini',
+	visionModelName: 'openai/gpt-4o-mini',
+	embeddingModelName: 'openai/text-embedding-3-small',
 	autoAddBacklinks: false,
 	backlinkConfidenceThreshold: 0.8,
 	displayThreshold: 0.8,

@@ -47,13 +47,24 @@ export class RelationSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName('Chat Model Name')
-			.setDesc(this.plugin.settings.provider === 'ollama' ? 'e.g., llama3, mistral' : 'e.g., openai/gpt-4o, anthropic/claude-3-haiku')
+			.setName('LLM Chat Model Name')
+			.setDesc(this.plugin.settings.provider === 'ollama' ? 'e.g., llama3, mistral' : 'e.g., openai/gpt-4o-mini, anthropic/claude-3-haiku')
 			.addText(text => text
 				.setPlaceholder('Enter model name')
-				.setValue(this.plugin.settings.modelName)
+				.setValue(this.plugin.settings.llmModelName)
 				.onChange(async (value) => {
-					this.plugin.settings.modelName = value;
+					this.plugin.settings.llmModelName = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Vision Model Name')
+			.setDesc(this.plugin.settings.provider === 'ollama' ? 'e.g., llava' : 'e.g., openai/gpt-4o, google/gemini-pro-vision')
+			.addText(text => text
+				.setPlaceholder('Enter vision model name')
+				.setValue(this.plugin.settings.visionModelName)
+				.onChange(async (value) => {
+					this.plugin.settings.visionModelName = value;
 					await this.plugin.saveSettings();
 				}));
 
