@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-relation-plugin",
+  "name": "Obsidian Relation Plugin",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "An Obsidian plugin to show related notes.",
+  "author": "Neetigya Maurya",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
