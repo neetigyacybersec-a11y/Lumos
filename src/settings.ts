@@ -128,6 +128,8 @@ export class RelationSettingTab extends PluginSettingTab {
 					this.plugin.settings.displayThreshold = value;
 					await this.plugin.saveSettings();
 				}));
+
+
 	}
 
 	hide(): void {

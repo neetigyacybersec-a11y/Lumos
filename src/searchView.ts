@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, requestUrl, MarkdownRenderer, TFile } from 'obsidian';
+import { ItemView, WorkspaceLeaf, requestUrl, MarkdownRenderer, TFile, MarkdownView } from 'obsidian';
 import RelationPlugin from './main';
 
 export const SEARCH_VIEW_TYPE = 'semantic-search-view';
@@ -7,6 +7,7 @@ export class SemanticSearchView extends ItemView {
     plugin: RelationPlugin;
     resultsContainer: HTMLElement;
     queryInput: HTMLInputElement;
+    chatHistory: { role: string, content: string, sources?: any[] }[] = [];
 
     constructor(leaf: WorkspaceLeaf, plugin: RelationPlugin) {
         super(leaf);
@@ -22,6 +23,7 @@ export class SemanticSearchView extends ItemView {
     }
 
     async onOpen() {
+        this.chatHistory = [];
         const container = this.containerEl.children[1];
         container.empty();
         
@@ -48,6 +50,7 @@ export class SemanticSearchView extends ItemView {
     async performSearch(query: string) {
         if (!query.trim()) return;
         
+        this.chatHistory = [];
         this.resultsContainer.empty();
         this.resultsContainer.createEl('p', { text: 'Embedding query...' });
         
@@ -70,114 +73,9 @@ export class SemanticSearchView extends ItemView {
             const aiResponseContainer = this.resultsContainer.createEl('div');
             
             askAiBtn.onclick = async () => {
-                aiResponseContainer.empty();
-                
-                // Premium Loading State
-                const loadingEl = aiResponseContainer.createEl('div');
-                loadingEl.style.padding = '15px';
-                loadingEl.style.textAlign = 'center';
-                loadingEl.style.color = 'var(--text-muted)';
-                loadingEl.style.backgroundColor = 'var(--background-secondary)';
-                loadingEl.style.borderRadius = '8px';
-                loadingEl.style.marginBottom = '15px';
-                loadingEl.style.border = '1px solid var(--background-modifier-border)';
-                loadingEl.style.animation = 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite';
-                loadingEl.createEl('span', { text: '✨ Synthesizing from your notes...' });
-
-                askAiBtn.disabled = true;
-                
-                try {
-                    const answer = await this.generateAnswer(query, results.slice(0, 5));
-                    aiResponseContainer.empty();
-                    
-                    // Premium Result Card
-                    const callout = aiResponseContainer.createEl('div');
-                    callout.style.padding = '15px';
-                    callout.style.border = '1px solid var(--background-modifier-border)';
-                    callout.style.borderRadius = '8px';
-                    callout.style.backgroundColor = 'var(--background-primary-alt)';
-                    callout.style.marginBottom = '20px';
-                    callout.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.05)';
-                    
-                    const header = callout.createEl('div');
-                    header.style.display = 'flex';
-                    header.style.alignItems = 'center';
-                    header.style.gap = '8px';
-                    header.style.marginBottom = '12px';
-                    header.style.borderBottom = '1px solid var(--background-modifier-border)';
-                    header.style.paddingBottom = '8px';
-                    header.style.color = 'var(--text-accent)';
-                    
-                    header.createEl('span', { text: '✨' });
-                    header.createEl('strong', { text: 'AI Synthesis' });
-                    
-                    const contentEl = callout.createEl('div', { cls: 'markdown-rendered' });
-                    contentEl.style.userSelect = 'text';
-                    
-                    // Render true markdown!
-                    await MarkdownRenderer.renderMarkdown(answer, contentEl, '', this);
-                    
-                    // Render Clickable Sources
-                    const uniqueSources = [...new Set(results.slice(0, 5).map(r => r.filePath))];
-                    if (uniqueSources.length > 0) {
-                        const sourceContainer = callout.createEl('div');
-                        sourceContainer.style.marginTop = '15px';
-                        sourceContainer.style.paddingTop = '12px';
-                        sourceContainer.style.borderTop = '1px solid var(--background-modifier-border)';
-                        sourceContainer.style.display = 'flex';
-                        sourceContainer.style.flexWrap = 'wrap';
-                        sourceContainer.style.alignItems = 'center';
-                        sourceContainer.style.gap = '8px';
-                        
-                        const sourceLabel = sourceContainer.createEl('span', { text: 'Sources:' });
-                        sourceLabel.style.fontSize = '0.85em';
-                        sourceLabel.style.fontWeight = '600';
-                        sourceLabel.style.color = 'var(--text-muted)';
-
-                        uniqueSources.forEach(filePath => {
-                            const fileName = filePath.split('/').pop() || filePath;
-                            const tag = sourceContainer.createEl('a', { text: fileName });
-                            tag.style.fontSize = '0.8em';
-                            tag.style.padding = '3px 10px';
-                            tag.style.borderRadius = '16px';
-                            tag.style.backgroundColor = 'var(--background-secondary)';
-                            tag.style.border = '1px solid var(--background-modifier-border)';
-                            tag.style.color = 'var(--text-accent)';
-                            tag.style.textDecoration = 'none';
-                            tag.style.cursor = 'pointer';
-                            tag.style.transition = 'all 0.15s ease';
-                            
-                            tag.onmouseenter = () => {
-                                tag.style.backgroundColor = 'var(--interactive-accent)';
-                                tag.style.color = 'var(--text-on-accent)';
-                                tag.style.borderColor = 'var(--interactive-accent)';
-                            };
-                            tag.onmouseleave = () => {
-                                tag.style.backgroundColor = 'var(--background-secondary)';
-                                tag.style.color = 'var(--text-accent)';
-                                tag.style.borderColor = 'var(--background-modifier-border)';
-                            };
-                            
-                            tag.onclick = async (e) => {
-                                e.preventDefault();
-                                const file = this.app.vault.getAbstractFileByPath(filePath);
-                                if (file && file instanceof TFile) {
-                                    await this.app.workspace.getLeaf(true).openFile(file);
-                                }
-                            };
-                        });
-                    }
-                    
-                } catch (e) {
-                    aiResponseContainer.empty();
-                    const errEl = aiResponseContainer.createEl('div');
-                    errEl.style.padding = '15px';
-                    errEl.style.borderLeft = '4px solid var(--text-error)';
-                    errEl.style.backgroundColor = 'var(--background-modifier-error)';
-                    errEl.style.borderRadius = '0 8px 8px 0';
-                    errEl.createEl('p', { text: 'Error generating answer: ' + e.message, cls: 'error' });
-                }
-                askAiBtn.disabled = false;
+                askAiBtn.style.display = 'none';
+                this.chatHistory.push({ role: 'user', content: query });
+                await this.renderChatAndGenerate(results.slice(0, 5), aiResponseContainer);
             };
 
             this.resultsContainer.createEl('h4', { text: 'Top Matches' });
@@ -221,41 +119,249 @@ export class SemanticSearchView extends ItemView {
         }
     }
 
-    async generateAnswer(query: string, contextChunks: {filePath: string, text: string}[]): Promise<string> {
+    async renderChatAndGenerate(contextChunks: any[], container: HTMLElement) {
+        container.empty();
+        
+        for (const msg of this.chatHistory) {
+            const bubble = container.createEl('div');
+            bubble.style.padding = '15px';
+            bubble.style.marginBottom = '15px';
+            bubble.style.borderRadius = '8px';
+            
+            if (msg.role === 'user') {
+                bubble.style.backgroundColor = 'var(--interactive-accent)';
+                bubble.style.color = 'var(--text-on-accent)';
+                bubble.style.marginLeft = '20px';
+                bubble.createEl('strong', { text: 'You' });
+                bubble.createEl('p', { text: msg.content, cls: 'chat-message' });
+            } else {
+                bubble.style.border = '1px solid var(--background-modifier-border)';
+                bubble.style.backgroundColor = 'var(--background-primary-alt)';
+                bubble.style.marginRight = '20px';
+                
+                const header = bubble.createEl('div');
+                header.style.display = 'flex';
+                header.style.alignItems = 'center';
+                header.style.gap = '8px';
+                header.style.marginBottom = '12px';
+                header.style.borderBottom = '1px solid var(--background-modifier-border)';
+                header.style.paddingBottom = '8px';
+                header.style.color = 'var(--text-accent)';
+                header.createEl('span', { text: '✨' });
+                header.createEl('strong', { text: 'AI Synthesis' });
+                
+                const contentEl = bubble.createEl('div', { cls: 'markdown-rendered' });
+                contentEl.style.userSelect = 'text';
+                MarkdownRenderer.renderMarkdown(msg.content, contentEl, '', this);
+                
+                // Action Buttons
+                const actionsContainer = bubble.createEl('div');
+                actionsContainer.style.display = 'flex';
+                actionsContainer.style.gap = '8px';
+                actionsContainer.style.marginTop = '15px';
+                actionsContainer.style.paddingTop = '12px';
+                actionsContainer.style.borderTop = '1px solid var(--background-modifier-border)';
+
+                const copyBtn = actionsContainer.createEl('button', { text: '📋 Copy' });
+                copyBtn.onclick = async () => {
+                    await navigator.clipboard.writeText(msg.content);
+                    const orig = copyBtn.innerText;
+                    copyBtn.innerText = '✅ Copied!';
+                    setTimeout(() => copyBtn.innerText = orig, 2000);
+                };
+
+                const insertBtn = actionsContainer.createEl('button', { text: '📥 Insert' });
+                insertBtn.onclick = () => {
+                    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+                    if (view && view.editor) {
+                        view.editor.replaceSelection(msg.content);
+                        const orig = insertBtn.innerText;
+                        insertBtn.innerText = '✅ Inserted!';
+                        setTimeout(() => insertBtn.innerText = orig, 2000);
+                    } else {
+                        const orig = insertBtn.innerText;
+                        insertBtn.innerText = '❌ No active note';
+                        setTimeout(() => insertBtn.innerText = orig, 2000);
+                    }
+                };
+
+                // Sources
+                if (msg.sources && msg.sources.length > 0) {
+                    const uniqueSources = [...new Set(msg.sources.map(r => r.filePath))];
+                    const sourceContainer = bubble.createEl('div');
+                    sourceContainer.style.marginTop = '15px';
+                    sourceContainer.style.paddingTop = '12px';
+                    sourceContainer.style.borderTop = '1px solid var(--background-modifier-border)';
+                    sourceContainer.style.display = 'flex';
+                    sourceContainer.style.flexWrap = 'wrap';
+                    sourceContainer.style.alignItems = 'center';
+                    sourceContainer.style.gap = '8px';
+                    
+                    const sourceLabel = sourceContainer.createEl('span', { text: 'Sources:' });
+                    sourceLabel.style.fontSize = '0.85em';
+                    sourceLabel.style.fontWeight = '600';
+                    sourceLabel.style.color = 'var(--text-muted)';
+
+                    uniqueSources.forEach(filePath => {
+                        const fileName = filePath.split('/').pop() || filePath;
+                        const tag = sourceContainer.createEl('a', { text: fileName });
+                        tag.style.fontSize = '0.8em';
+                        tag.style.padding = '3px 10px';
+                        tag.style.borderRadius = '16px';
+                        tag.style.backgroundColor = 'var(--background-secondary)';
+                        tag.style.border = '1px solid var(--background-modifier-border)';
+                        tag.style.color = 'var(--text-accent)';
+                        tag.style.textDecoration = 'none';
+                        tag.style.cursor = 'pointer';
+                        
+                        tag.onclick = async (e) => {
+                            e.preventDefault();
+                            const file = this.app.vault.getAbstractFileByPath(filePath);
+                            if (file && file instanceof TFile) {
+                                await this.app.workspace.getLeaf(true).openFile(file);
+                            }
+                        };
+                    });
+                }
+            }
+        }
+        
+        // If last message was user, generate response
+        if (this.chatHistory.length > 0 && this.chatHistory[this.chatHistory.length - 1].role === 'user') {
+            
+            const bubble = container.createEl('div');
+            bubble.style.padding = '15px';
+            bubble.style.marginBottom = '15px';
+            bubble.style.borderRadius = '8px';
+            bubble.style.border = '1px solid var(--background-modifier-border)';
+            bubble.style.backgroundColor = 'var(--background-primary-alt)';
+            bubble.style.marginRight = '20px';
+            
+            const header = bubble.createEl('div');
+            header.style.display = 'flex';
+            header.style.alignItems = 'center';
+            header.style.gap = '8px';
+            header.style.marginBottom = '12px';
+            header.style.borderBottom = '1px solid var(--background-modifier-border)';
+            header.style.paddingBottom = '8px';
+            header.style.color = 'var(--text-accent)';
+            header.createEl('span', { text: '✨' });
+            header.createEl('strong', { text: 'AI Synthesis' });
+            
+            const contentEl = bubble.createEl('div', { cls: 'markdown-rendered' });
+            contentEl.style.userSelect = 'text';
+            contentEl.createEl('span', { text: 'Synthesizing...' });
+            
+            try {
+                let currentAnswer = '';
+                let lastRender = 0;
+                
+                const answer = await this.generateAnswer(contextChunks, (chunk) => {
+                    currentAnswer += chunk;
+                    const now = Date.now();
+                    if (now - lastRender > 50) {
+                        contentEl.empty();
+                        MarkdownRenderer.renderMarkdown(currentAnswer + ' ▍', contentEl, '', this);
+                        lastRender = now;
+                        container.scrollTop = container.scrollHeight;
+                    }
+                });
+                
+                this.chatHistory.push({ role: 'assistant', content: answer, sources: contextChunks });
+                await this.renderChatAndGenerate([], container); // Re-render to add buttons
+                return;
+            } catch (e) {
+                contentEl.empty();
+                contentEl.createEl('p', { text: 'Error: ' + e.message, cls: 'error' });
+                return; // Stop here if error
+            }
+        }
+        
+        // Add follow-up input
+        const followUpForm = container.createEl('form');
+        followUpForm.style.display = 'flex';
+        followUpForm.style.gap = '5px';
+        followUpForm.style.marginTop = '15px';
+        
+        const followUpInput = followUpForm.createEl('input', { type: 'text', placeholder: 'Ask a follow-up...' });
+        followUpInput.style.flex = '1';
+        
+        const followUpBtn = followUpForm.createEl('button', { text: 'Send', type: 'submit' });
+        
+        followUpForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const q = followUpInput.value;
+            if (!q.trim()) return;
+            
+            followUpInput.disabled = true;
+            followUpBtn.disabled = true;
+            
+            this.chatHistory.push({ role: 'user', content: q });
+            
+            try {
+                const queryVector = await this.plugin.embeddingPipeline.embed(q);
+                const newResults = this.plugin.vectorStore.querySimilar(queryVector, 5);
+                await this.renderChatAndGenerate(newResults, container);
+            } catch(err) {
+                 console.error(err);
+            }
+        };
+        
+        // Auto focus the follow-up input
+        setTimeout(() => followUpInput.focus(), 100);
+    }
+
+    async generateAnswer(contextChunks: {filePath: string, text: string}[], onChunk: (chunk: string) => void): Promise<string> {
         const contextText = contextChunks.map(c => `[Source: ${c.filePath}]\n${c.text}`).join('\n\n');
-        const prompt = `You are an AI assistant for a personal knowledge base.
+        const systemPrompt = `You are an AI assistant for a personal knowledge base.
 Using ONLY the provided context from the user's notes, answer the question or explain the concept provided.
 If the user provides a keyword or topic instead of a full question, summarize what the notes say about that topic.
 If the context contains absolutely no relevant information, say "I don't have enough information in your notes about this."
 
 Context:
-${contextText}
+${contextText}`;
 
-Query/Topic: ${query}
-Answer:`;
+        const messages = [{ role: 'system', content: systemPrompt }];
+        for (const msg of this.chatHistory) {
+            messages.push({ role: msg.role === 'user' ? 'user' : 'assistant', content: msg.content });
+        }
+
+        let fullContent = '';
 
         if (this.plugin.settings.provider === 'ollama') {
-            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/api/generate';
-            const res = await requestUrl({
-                url,
+            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/api/chat';
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     model: this.plugin.settings.llmModelName || 'llama3',
-                    prompt: prompt,
-                    stream: false
-                }),
-                throw: false
+                    messages: messages,
+                    stream: true
+                })
             });
-            if (res.status !== 200) {
-                console.error('Ollama generation failed', res.status, res.text);
-                throw new Error(`Ollama failed (${res.status}): ${res.text}`);
+            
+            if (!res.ok) throw new Error(`Ollama failed (${res.status}): ${await res.text()}`);
+            
+            const reader = res.body?.getReader();
+            const decoder = new TextDecoder();
+            while (true) {
+                const { done, value } = await reader!.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split('\n').filter(l => l.trim() !== '');
+                for (const line of lines) {
+                    try {
+                        const parsed = JSON.parse(line);
+                        if (parsed.message && parsed.message.content) {
+                            onChunk(parsed.message.content);
+                            fullContent += parsed.message.content;
+                        }
+                    } catch(e) {}
+                }
             }
-            return res.json.response;
         } else {
             const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/chat/completions';
-            const res = await requestUrl({
-                url,
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -265,15 +371,36 @@ Answer:`;
                 },
                 body: JSON.stringify({
                     model: this.plugin.settings.llmModelName || 'meta-llama/llama-3-8b-instruct',
-                    messages: [{ role: 'user', content: prompt }]
-                }),
-                throw: false
+                    messages: messages,
+                    stream: true
+                })
             });
-            if (res.status !== 200) {
-                console.error('OpenRouter generation failed', res.status, res.text);
-                throw new Error(`OpenRouter failed (${res.status}): ${res.text}`);
+            
+            if (!res.ok) throw new Error(`OpenRouter failed (${res.status}): ${await res.text()}`);
+            
+            const reader = res.body?.getReader();
+            const decoder = new TextDecoder();
+            while (true) {
+                const { done, value } = await reader!.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split('\n').filter(l => l.trim() !== '');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = line.slice(6);
+                        if (data.trim() === '[DONE]') continue;
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.choices && parsed.choices[0].delta && parsed.choices[0].delta.content) {
+                                onChunk(parsed.choices[0].delta.content);
+                                fullContent += parsed.choices[0].delta.content;
+                            }
+                        } catch(e) {}
+                    }
+                }
             }
-            return res.json.choices[0].message.content;
         }
+        
+        return fullContent;
     }
 }
