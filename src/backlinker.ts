@@ -84,7 +84,7 @@ export class BacklinkManager {
                 frontmatter.ai_relations = [...new Set(frontmatter.ai_relations)];
             });
         } catch (e) {
-            console.error(`[RelationPlugin] Failed to inject backlinks into ${sourceFile.path}`, e);
+            console.error(`[Lumos] Failed to inject backlinks into ${sourceFile.path}`, e);
         }
     }
 }

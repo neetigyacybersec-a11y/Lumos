@@ -1,19 +1,19 @@
 import { TFile, Notice } from 'obsidian';
-import RelationPlugin from './main';
+import LumosPlugin from './main';
 import { RELATION_VIEW_TYPE, RelationSidebarView } from './sidebarView';
 import { hashString, isPathIgnored } from './utils';
 import { IndexingProgressUI } from './progressUi';
 const pdfParse = require('pdf-parse');
 
 export class BackgroundIndexer {
-    plugin: RelationPlugin;
+    plugin: LumosPlugin;
     queue: TFile[] = [];
     isProcessing: boolean = false;
     progressUi: IndexingProgressUI;
     totalFiles: number = 0;
     processedFiles: number = 0;
 
-    constructor(plugin: RelationPlugin) {
+    constructor(plugin: LumosPlugin) {
         this.plugin = plugin;
         this.progressUi = new IndexingProgressUI();
     }

@@ -1,4 +1,4 @@
-# Obsidian Relation Plugin
+# Lumos
 
 An intelligent, privacy-first Obsidian plugin that seamlessly finds semantic relations between your notes, tracks an evolving AI User Profile, and automatically links related concepts using vector embeddings and Vision LLMs for images.
 
@@ -13,7 +13,7 @@ An intelligent, privacy-first Obsidian plugin that seamlessly finds semantic rel
 
 ## Installation
 
-1. Copy `main.js`, `manifest.json`, and `styles.css` into your vault's plugin folder: `.obsidian/plugins/obsidian-relation-plugin/`.
+1. Copy `main.js`, `manifest.json`, and `styles.css` into your vault's plugin folder: `.obsidian/plugins/lumos/`.
 2. Reload Obsidian and enable the plugin.
 
 ## Configuration

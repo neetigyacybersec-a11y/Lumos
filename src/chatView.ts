@@ -1,11 +1,11 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice } from 'obsidian';
-import RelationPlugin from './main';
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, setIcon } from 'obsidian';
+import LumosPlugin from './main';
 import { ChatLogic, ChatMessage } from './chatLogic';
 
-export const CHAT_VIEW_TYPE = 'llm-relations-chat-view';
+export const CHAT_VIEW_TYPE = 'relation-chat-view';
 
 export class ChatView extends ItemView {
-    plugin: RelationPlugin;
+    plugin: LumosPlugin;
     chatLogic: ChatLogic;
     history: ChatMessage[] = [];
     
@@ -14,7 +14,12 @@ export class ChatView extends ItemView {
     sendBtn: HTMLButtonElement;
     isGenerating: boolean = false;
 
-    constructor(leaf: WorkspaceLeaf, plugin: RelationPlugin) {
+    private messageContainerEl: HTMLElement;
+    private sendButtonEl: HTMLButtonElement;
+    private processingIndicatorEl: HTMLElement;
+    private scrollAnchorEl: HTMLElement;
+
+    constructor(leaf: WorkspaceLeaf, plugin: LumosPlugin) {
         super(leaf);
         this.plugin = plugin;
         this.chatLogic = new ChatLogic(plugin);

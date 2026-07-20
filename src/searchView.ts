@@ -1,15 +1,15 @@
 import { ItemView, WorkspaceLeaf, requestUrl, MarkdownRenderer, TFile, MarkdownView } from 'obsidian';
-import RelationPlugin from './main';
+import LumosPlugin from './main';
 
 export const SEARCH_VIEW_TYPE = 'semantic-search-view';
 
 export class SemanticSearchView extends ItemView {
-    plugin: RelationPlugin;
+    plugin: LumosPlugin;
     resultsContainer: HTMLElement;
     queryInput: HTMLInputElement;
     chatHistory: { role: string, content: string, sources?: any[] }[] = [];
 
-    constructor(leaf: WorkspaceLeaf, plugin: RelationPlugin) {
+    constructor(leaf: WorkspaceLeaf, plugin: LumosPlugin) {
         super(leaf);
         this.plugin = plugin;
     }

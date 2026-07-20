@@ -1,7 +1,7 @@
 {
-  "name": "obsidian-relation-plugin",
+  "name": "lumos",
   "version": "1.0.0",
-  "description": "An Obsidian plugin that finds semantic relations",
+  "description": "An intelligent Obsidian plugin to illuminate connections between your notes.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

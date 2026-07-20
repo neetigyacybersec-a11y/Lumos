@@ -1,13 +1,13 @@
 import { ItemView, WorkspaceLeaf } from 'obsidian';
-import RelationPlugin from './main';
+import LumosPlugin from './main';
 import { getSortedEdgesForPath, formatEdge } from './sidebarLogic';
 
 export const RELATION_VIEW_TYPE = 'relation-sidebar-view';
 
 export class RelationSidebarView extends ItemView {
-    plugin: RelationPlugin;
+    plugin: LumosPlugin;
 
-    constructor(leaf: WorkspaceLeaf, plugin: RelationPlugin) {
+    constructor(leaf: WorkspaceLeaf, plugin: LumosPlugin) {
         super(leaf);
         this.plugin = plugin;
     }

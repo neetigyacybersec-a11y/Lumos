@@ -1,5 +1,5 @@
 import { requestUrl, TFile } from 'obsidian';
-import RelationPlugin from './main';
+import LumosPlugin from './main';
 
 export interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
@@ -7,9 +7,13 @@ export interface ChatMessage {
 }
 
 export class ChatLogic {
-    plugin: RelationPlugin;
+    // We maintain a sliding window of the last 10 messages for context
+    private chatHistory: { role: string, content: string }[] = [];
+    private maxHistory = 10; 
+    private isProcessing = false;
+    plugin: LumosPlugin;
 
-    constructor(plugin: RelationPlugin) {
+    constructor(plugin: LumosPlugin) {
         this.plugin = plugin;
     }
 

@@ -1,10 +1,10 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
-import RelationPlugin from './main';
+import LumosPlugin from './main';
 
 export class RelationSettingTab extends PluginSettingTab {
-	plugin: RelationPlugin;
+	plugin: LumosPlugin;
 
-	constructor(app: App, plugin: RelationPlugin) {
+	constructor(app: App, plugin: LumosPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}

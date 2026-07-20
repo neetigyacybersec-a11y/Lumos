@@ -19,7 +19,7 @@ import { SEARCH_VIEW_TYPE, SemanticSearchView } from './searchView';
 import { UserProfileManager } from './userProfile';
 import { ChatView, CHAT_VIEW_TYPE } from './chatView';
 
-export default class RelationPlugin extends Plugin {
+export default class LumosPlugin extends Plugin {
 	settings: PluginSettings;
 	watcher: Watcher;
 	parser: Parser;
@@ -35,7 +35,7 @@ export default class RelationPlugin extends Plugin {
 	userProfileManager: UserProfileManager;
 
 	async onload() {
-		console.log('obsidian-relation-plugin loaded');
+		console.log('lumos loaded');
 		await this.loadSettings();
 		this.addSettingTab(new RelationSettingTab(this.app, this));
 
@@ -103,11 +103,11 @@ export default class RelationPlugin extends Plugin {
 				await this.relationStore.deleteEdges(file.path);
 			} else {
 				const parsed = await this.parser.parse(file);
-				console.log(`[RelationPlugin] File ready: ${file.path}`);
+				console.log(`[Lumos] File ready: ${file.path}`);
 				
 				const contentHash = hashString(parsed.cleanText);
 				if (this.vectorStore.getFileHash(file.path) === contentHash) {
-					console.log(`[RelationPlugin] Skipping ${file.path} as content hash matches.`);
+					console.log(`[Lumos] Skipping ${file.path} as content hash matches.`);
 					return;
 				}
 
@@ -171,7 +171,7 @@ export default class RelationPlugin extends Plugin {
 						}
 					}
 				} catch (e) {
-					console.error(`[RelationPlugin] Failed pipeline for ${file.path}`, e);
+					console.error(`[Lumos] Failed pipeline for ${file.path}`, e);
 				}
 
 				if (!didExtract) {
@@ -191,7 +191,7 @@ export default class RelationPlugin extends Plugin {
 	}
 
 	async onunload() {
-		console.log('obsidian-relation-plugin unloaded');
+		console.log('lumos unloaded');
 		this.watcher.unregister();
 		this.app.workspace.detachLeavesOfType(RELATION_VIEW_TYPE);
 	}
