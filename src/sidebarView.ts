@@ -72,7 +72,11 @@ export class RelationSidebarView extends ItemView {
         container.createEl('h3', { text: `Relations for ${activeFile.basename}` });
         
         if (sorted.length === 0) {
-            container.createEl('p', { text: 'No relations found yet. Edit the file to trigger extraction.' });
+            if (edges.length > 0) {
+                container.createEl('p', { text: 'All discovered relations are already linked in your document.' });
+            } else {
+                container.createEl('p', { text: 'No relations found yet. Edit the file to trigger extraction.' });
+            }
             return;
         }
 

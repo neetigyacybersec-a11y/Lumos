@@ -2,15 +2,20 @@ import { TFile, Notice } from 'obsidian';
 import RelationPlugin from './main';
 import { RELATION_VIEW_TYPE, RelationSidebarView } from './sidebarView';
 import { hashString } from './utils';
+import { IndexingProgressUI } from './progressUi';
 const pdfParse = require('pdf-parse');
 
 export class BackgroundIndexer {
     plugin: RelationPlugin;
     queue: TFile[] = [];
     isProcessing: boolean = false;
+    progressUi: IndexingProgressUI;
+    totalFiles: number = 0;
+    processedFiles: number = 0;
 
     constructor(plugin: RelationPlugin) {
         this.plugin = plugin;
+        this.progressUi = new IndexingProgressUI();
     }
 
     async start() {
@@ -20,6 +25,7 @@ export class BackgroundIndexer {
         for (const file of files) {
             const ext = file.extension.toLowerCase();
             if (!['md', 'pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(ext)) continue;
+            if (file.path === this.plugin.settings.userProfilePath) continue;
 
             if (!this.plugin.vectorStore.hasFile(file.path)) {
                 this.queue.push(file);
@@ -28,7 +34,9 @@ export class BackgroundIndexer {
         }
 
         if (added > 0) {
-            new Notice(`[LLM Relations] Found ${added} unindexed notes. Indexing in background...`);
+            this.totalFiles = added;
+            this.processedFiles = 0;
+            this.progressUi.show(this.totalFiles);
             this.processQueue();
         } else {
             console.log('[RelationPlugin] Vault is fully indexed.');
@@ -38,6 +46,7 @@ export class BackgroundIndexer {
     async processQueue() {
         if (this.isProcessing || this.queue.length === 0) return;
         this.isProcessing = true;
+        this.plugin.userProfileManager.pauseUpdates();
 
         while (this.queue.length > 0) {
             const file = this.queue.shift();
@@ -97,8 +106,12 @@ export class BackgroundIndexer {
                     if (similar.length > 0) {
                         const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
                         const prompt = this.plugin.relationExtractor.constructPrompt(file.path, cleanText, candidates);
-                        const edges = await this.plugin.relationExtractor.extractRelations(prompt, file.path);
+                        const { edges, profileInsights } = await this.plugin.relationExtractor.extractRelations(prompt, file.path);
                         
+                        if (profileInsights) {
+                            await this.plugin.userProfileManager.addInsight(profileInsights);
+                        }
+
                         // Compute final scores
                         const scoredEdges = edges.map(edge => {
                             const targetFile = this.plugin.app.vault.getAbstractFileByPath(edge.target);
@@ -115,11 +128,18 @@ export class BackgroundIndexer {
                         
                         // Process Backlinks
                         await this.plugin.backlinkManager.processEdges(file, edges);
+                    } else {
+                        await this.plugin.userProfileManager.addActivity(cleanText);
                     }
+                } else if (ext === 'md') {
+                    await this.plugin.userProfileManager.addActivity(cleanText);
                 }
             } catch (e) {
                 console.error(`[RelationPlugin] Failed to index ${file.path}`, e);
             }
+
+            this.processedFiles++;
+            this.progressUi.update(this.processedFiles, file.name);
 
             // Sleep a bit to avoid locking the UI and hitting rate limits too hard
             await new Promise(resolve => setTimeout(resolve, 1500));
@@ -129,7 +149,17 @@ export class BackgroundIndexer {
         await this.plugin.vectorStore.save();
         await this.plugin.relationStore.save();
 
+        // Ensure profile file exists so the user knows where it is
+        const path = this.plugin.settings.userProfilePath;
+        if (!this.plugin.app.vault.getAbstractFileByPath(path)) {
+            await this.plugin.app.vault.create(path, "# AI User Profile\n\n*No profile insights have been extracted yet. Keep writing notes!*");
+        }
+        
+        this.plugin.userProfileManager.resumeUpdates();
+        await this.plugin.userProfileManager.flush();
+
         this.isProcessing = false;
+        this.progressUi.hide();
         new Notice(`[LLM Relations] Initial vault indexing complete!`);
         
         // Trigger UI refresh

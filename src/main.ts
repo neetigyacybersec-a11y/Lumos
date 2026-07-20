@@ -16,6 +16,8 @@ import { ScoringEngine } from './scoring';
 import { VisionExtractor } from './vision';
 import { LocalOcr } from './localOcr';
 import { SEARCH_VIEW_TYPE, SemanticSearchView } from './searchView';
+import { UserProfileManager } from './userProfile';
+import { ChatView, CHAT_VIEW_TYPE } from './chatView';
 
 export default class RelationPlugin extends Plugin {
 	settings: PluginSettings;
@@ -30,6 +32,7 @@ export default class RelationPlugin extends Plugin {
 	scoringEngine: ScoringEngine;
 	visionExtractor: VisionExtractor;
 	localOcr: LocalOcr;
+	userProfileManager: UserProfileManager;
 
 	async onload() {
 		console.log('obsidian-relation-plugin loaded');
@@ -41,6 +44,7 @@ export default class RelationPlugin extends Plugin {
 			(leaf) => new RelationSidebarView(leaf, this)
 		);
 		this.registerView(SEARCH_VIEW_TYPE, (leaf) => new SemanticSearchView(leaf, this));
+		this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
 
 		this.addRibbonIcon('link', 'LLM Relations', () => {
 			this.activateView();
@@ -48,6 +52,10 @@ export default class RelationPlugin extends Plugin {
 		
 		this.addRibbonIcon('search', 'Semantic Search', () => {
 			this.activateSearchView();
+		});
+
+		this.addRibbonIcon('message-circle', 'AI Chat', () => {
+			this.activateChatView();
 		});
 
 		this.addCommand({
@@ -77,6 +85,7 @@ export default class RelationPlugin extends Plugin {
 		this.scoringEngine = new ScoringEngine(this.app);
 		this.visionExtractor = new VisionExtractor(this.app, this.settings);
 		this.localOcr = new LocalOcr(this.app);
+		this.userProfileManager = new UserProfileManager(this.app, this);
 		
 		this.indexer = new BackgroundIndexer(this);
 
@@ -85,6 +94,8 @@ export default class RelationPlugin extends Plugin {
 		});
 
 		this.watcher.onReady(async (file: TFile) => {
+			if (file.path === this.settings.userProfilePath) return;
+
 			const deleted = !(await this.app.vault.adapter.exists(file.path));
 			if (deleted) {
 				console.log(`[RelationPlugin] File deleted: ${file.path}`);
@@ -103,6 +114,7 @@ export default class RelationPlugin extends Plugin {
 				// Process embeddings
 				const chunks = this.embeddingPipeline.chunkText(parsed.cleanText);
 				let firstEmbedding: number[] | null = null;
+				let didExtract = false;
 				
 				try {
 					const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
@@ -120,17 +132,22 @@ export default class RelationPlugin extends Plugin {
 					console.log(`[RelationPlugin] Saved ${vectorChunks.length} embeddings for ${file.path}`);
 					
 					// Run Relation Extraction if we have embeddings
-					if (firstEmbedding) {
+					if (firstEmbedding && this.vectorStore.getFileCount() > 1) {
 						const similar = this.vectorStore.querySimilar(firstEmbedding, 3, file.path);
 						if (similar.length > 0) {
+							didExtract = true;
 							const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
 							const prompt = this.relationExtractor.constructPrompt(file.path, parsed.cleanText, candidates);
 							
 							console.log(`[RelationPlugin] Asking LLM for relations...`);
-							const extractedEdges = await this.relationExtractor.extractRelations(prompt, file.path);
+							const { edges, profileInsights } = await this.relationExtractor.extractRelations(prompt, file.path);
+							
+							if (profileInsights) {
+								await this.userProfileManager.addInsight(profileInsights);
+							}
 							
 							// Compute final scores
-							const edges = extractedEdges.map(edge => {
+							const scoredEdges = edges.map(edge => {
 								const targetFile = this.app.vault.getAbstractFileByPath(edge.target);
 								if (!(targetFile instanceof TFile)) return edge;
 								
@@ -141,11 +158,11 @@ export default class RelationPlugin extends Plugin {
 								return edge;
 							});
 
-							await this.relationStore.upsertEdges(file.path, edges);
-							console.log(`[RelationPlugin] Extracted ${edges.length} edges for ${file.path}`, edges);
+							await this.relationStore.upsertEdges(file.path, scoredEdges);
+							console.log(`[RelationPlugin] Extracted ${scoredEdges.length} edges for ${file.path}`, scoredEdges);
 							
 							// Process Backlinks
-							await this.backlinkManager.processEdges(file, edges);
+							await this.backlinkManager.processEdges(file, scoredEdges);
 
 							// Trigger re-render of the sidebar if it's open
 							const leaves = this.app.workspace.getLeavesOfType(RELATION_VIEW_TYPE);
@@ -158,6 +175,10 @@ export default class RelationPlugin extends Plugin {
 					}
 				} catch (e) {
 					console.error(`[RelationPlugin] Failed pipeline for ${file.path}`, e);
+				}
+
+				if (!didExtract) {
+					await this.userProfileManager.addActivity(parsed.cleanText);
 				}
 			}
 		});
@@ -203,6 +224,22 @@ export default class RelationPlugin extends Plugin {
 			const rightLeaf = workspace.getRightLeaf(false);
 			if (rightLeaf) {
 				await rightLeaf.setViewState({ type: SEARCH_VIEW_TYPE, active: true });
+				leaf = rightLeaf;
+			}
+		}
+		
+		if (leaf) workspace.revealLeaf(leaf);
+	}
+
+	async activateChatView() {
+		const { workspace } = this.app;
+		
+		let leaf = workspace.getLeavesOfType(CHAT_VIEW_TYPE)[0];
+		
+		if (!leaf) {
+			const rightLeaf = workspace.getRightLeaf(false);
+			if (rightLeaf) {
+				await rightLeaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
 				leaf = rightLeaf;
 			}
 		}

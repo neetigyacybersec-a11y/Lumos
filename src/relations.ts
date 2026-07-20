@@ -24,7 +24,7 @@ Candidate Notes:
 ${candidateContext}
 
 Extract any strong relationships as JSON. 
-Format your output STRICTLY as a JSON object with a single key "relations" containing an array of objects:
+Format your output STRICTLY as a JSON object with two keys: "relations" and "profileInsights".
 {
   "relations": [
     {
@@ -33,16 +33,17 @@ Format your output STRICTLY as a JSON object with a single key "relations" conta
       "confidence": 0.8,
       "evidence": "A short snippet or explanation why they relate"
     }
-  ]
+  ],
+  "profileInsights": "If the Source Note contains information about the user's current mood, active projects, or important life events, summarize it briefly here. Otherwise, set this to null."
 }
 
 CRITICAL RULES:
 1. For "relationType", you MUST pick exactly one of these five fixed strings: "duplicate-effort", "prerequisite", "contradicts", "extends", or "thematic-only". Do NOT write freeform prose for relationType.
 2. Output only valid JSON, no markdown formatting or extra text.
-3. If there are no relationships, output {"relations": []}.`;
+3. If there are no relationships, output {"relations": [], "profileInsights": null}.`;
     }
 
-    async extractRelations(prompt: string, sourcePath: string): Promise<RelationEdge[]> {
+    async extractRelations(prompt: string, sourcePath: string): Promise<{ edges: RelationEdge[], profileInsights: string | null }> {
         let jsonStr = '';
         if (this.settings.provider === 'ollama') {
             const url = this.settings.baseUrl.replace(/\/$/, '') + '/api/generate';
@@ -89,16 +90,20 @@ CRITICAL RULES:
             const parsed = JSON.parse(cleanStr);
             const array = parsed.relations || [];
             
-            return array.map((item: any) => ({
+            const edges = array.map((item: any) => ({
                 source: sourcePath,
                 target: item.target || 'unknown',
                 relationType: item.relationType || item.relation || 'thematic-only',
                 confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
                 evidence: item.evidence || ''
             }));
+            
+            const profileInsights = typeof parsed.profileInsights === 'string' ? parsed.profileInsights : null;
+
+            return { edges, profileInsights };
         } catch (e) {
             console.error('Failed to parse JSON from LLM:', jsonStr);
-            return [];
+            return { edges: [], profileInsights: null };
         }
     }
 }

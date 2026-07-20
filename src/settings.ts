@@ -129,7 +129,43 @@ export class RelationSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		containerEl.createEl('h3', {text: 'AI User Profile', cls: 'setting-item-heading'});
 
+		new Setting(containerEl)
+			.setName('Enable Auto-Updating Profile')
+			.setDesc('Automatically maintain a markdown file that learns about your current projects, mood, and important events in the background.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.enableUserProfile)
+				.onChange(async (value) => {
+					this.plugin.settings.enableUserProfile = value;
+					await this.plugin.saveSettings();
+					this.display();
+				}));
+
+		if (this.plugin.settings.enableUserProfile) {
+			new Setting(containerEl)
+				.setName('Profile File Name')
+				.setDesc('The name of the file in your vault root where the profile will be maintained.')
+				.addText(text => text
+					.setValue(this.plugin.settings.userProfilePath)
+					.onChange(async (value) => {
+						this.plugin.settings.userProfilePath = value;
+						await this.plugin.saveSettings();
+					}));
+
+			new Setting(containerEl)
+				.setName('Update Threshold (Words)')
+				.setDesc('To minimize API costs, the profile will only update after you have written or modified this many words across your notes.')
+				.addText(text => text
+					.setValue(this.plugin.settings.userProfileWordThreshold.toString())
+					.onChange(async (value) => {
+						const num = parseInt(value, 10);
+						if (!isNaN(num) && num > 0) {
+							this.plugin.settings.userProfileWordThreshold = num;
+							await this.plugin.saveSettings();
+						}
+					}));
+		}
 	}
 
 	hide(): void {

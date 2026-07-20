@@ -10,6 +10,9 @@ export interface PluginSettings {
 	autoAddBacklinks: boolean;
 	backlinkConfidenceThreshold: number;
 	displayThreshold: number;
+	enableUserProfile: boolean;
+	userProfilePath: string;
+	userProfileWordThreshold: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -21,6 +24,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	autoAddBacklinks: false,
 	backlinkConfidenceThreshold: 0.8,
 	displayThreshold: 0.8,
+	enableUserProfile: true,
+	userProfilePath: 'User_Profile_AI.md',
+	userProfileWordThreshold: 500,
 }
 
 export interface QueuedFile {
