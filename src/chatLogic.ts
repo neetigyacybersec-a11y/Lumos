@@ -17,16 +17,66 @@ export class ChatLogic {
         this.plugin = plugin;
     }
 
+    private async callLLM(messages: ChatMessage[], isRouting: boolean = false): Promise<string> {
+        let resultText = '';
+        if (this.plugin.settings.provider === 'ollama') {
+            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/api/chat';
+            const res = await requestUrl({
+                url,
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: this.plugin.settings.llmModelName || 'llama3',
+                    messages: messages,
+                    stream: false
+                })
+            });
+            if (res.status !== 200) throw new Error('Ollama generation failed');
+            resultText = res.json.message.content;
+        } else {
+            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/chat/completions';
+            const res = await requestUrl({
+                url,
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.plugin.settings.apiKey}`
+                },
+                body: JSON.stringify({
+                    model: this.plugin.settings.llmModelName || 'meta-llama/llama-3-8b-instruct',
+                    messages: messages
+                })
+            });
+            if (res.status !== 200) throw new Error('OpenRouter generation failed');
+            resultText = res.json.choices[0].message.content;
+        }
+        return resultText;
+    }
+
     async generateResponse(query: string, history: ChatMessage[]): Promise<string> {
         try {
-            // 1. RAG: Retrieve context
+            // 1. Smart RAG: Determine if search is needed
             let retrievedContext = '';
             try {
-                const queryEmbedding = await this.plugin.embeddingPipeline.embed(query);
-                // Top 3 similar chunks
-                const similar = this.plugin.vectorStore.querySimilar(queryEmbedding, 3);
-                if (similar.length > 0) {
-                    retrievedContext = similar.map(c => `File: ${c.filePath}\nContent:\n${c.text}`).join('\n\n---\n\n');
+                const searchDeciderPrompt: ChatMessage[] = [
+                    { role: 'system', content: 'You are an internal routing AI. You must be EXTREMELY AGGRESSIVE about searching the user\'s vault. Unless the user is explicitly saying a generic greeting (like "hello") or a one-word acknowledgment (like "ok"), you MUST output a search query. Output a concise search query (1-5 words) to find related notes. ONLY output exactly "NO_SEARCH" if a search would be completely nonsensical. Only output the query or "NO_SEARCH". Do not explain.' },
+                    ...history,
+                    { role: 'user', content: query }
+                ];
+                
+                const searchDecision = await this.callLLM(searchDeciderPrompt, true);
+                
+                if (searchDecision && !searchDecision.includes('NO_SEARCH')) {
+                    const cleanQuery = searchDecision.replace(/["']/g, '').trim();
+                    console.log('[ChatLogic] Smart RAG triggering search for:', cleanQuery);
+                    const queryEmbedding = await this.plugin.embeddingPipeline.embed(cleanQuery);
+                    // Top 3 similar chunks
+                    const similar = this.plugin.vectorStore.querySimilar(queryEmbedding, 3);
+                    if (similar.length > 0) {
+                        retrievedContext = similar.map(c => `File: ${c.filePath}\nContent:\n${c.text}`).join('\n\n---\n\n');
+                    }
+                } else {
+                    console.log('[ChatLogic] Smart RAG determined no search needed.');
                 }
             } catch (e) {
                 console.error('[ChatLogic] Failed to retrieve RAG context:', e);
@@ -86,38 +136,7 @@ Disclaimer: If the user expresses intent to harm themselves or others, drop the 
             ];
 
             // 5. API Call
-            let resultText = '';
-            if (this.plugin.settings.provider === 'ollama') {
-                const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/api/chat';
-                const res = await requestUrl({
-                    url,
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        model: this.plugin.settings.llmModelName || 'llama3',
-                        messages: messages,
-                        stream: false
-                    })
-                });
-                if (res.status !== 200) throw new Error('Ollama generation failed');
-                resultText = res.json.message.content;
-            } else {
-                const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/chat/completions';
-                const res = await requestUrl({
-                    url,
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${this.plugin.settings.apiKey}`
-                    },
-                    body: JSON.stringify({
-                        model: this.plugin.settings.llmModelName || 'meta-llama/llama-3-8b-instruct',
-                        messages: messages
-                    })
-                });
-                if (res.status !== 200) throw new Error('OpenRouter generation failed');
-                resultText = res.json.choices[0].message.content;
-            }
+            const resultText = await this.callLLM(messages);
 
             return resultText;
         } catch (error) {

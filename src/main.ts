@@ -180,8 +180,7 @@ export default class LumosPlugin extends Plugin {
 			}
 		});
 
-		this.watcher.on('rename', async (file: TAbstractFile, oldPath: string) => {
-			if (!(file instanceof TFile)) return;
+		this.watcher.onRename(async (file: TFile, oldPath: string) => {
 			await this.vectorStore.renameFile(oldPath, file.path);
 			await this.relationStore.renameFile(oldPath, file.path);
 			this.activateView();

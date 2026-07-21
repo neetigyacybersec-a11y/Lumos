@@ -11,6 +11,7 @@ export interface VectorChunk {
 export class VectorStore {
     private plugin: Plugin;
     private vectors: VectorChunk[] = [];
+    private indexedFiles: Set<string> = new Set();
     private dataFile = 'vectors.json';
     private saveTimeout: any = null;
 
@@ -22,9 +23,17 @@ export class VectorStore {
         const manifestDir = this.plugin.manifest?.dir || '';
         const data = await this.plugin.app.vault.adapter.read(`${manifestDir}/${this.dataFile}`).catch(() => '[]');
         try {
-            this.vectors = JSON.parse(data);
+            const parsed = JSON.parse(data);
+            if (Array.isArray(parsed)) {
+                this.vectors = parsed;
+                this.indexedFiles = new Set(this.vectors.map(v => v.filePath));
+            } else {
+                this.vectors = parsed.vectors || [];
+                this.indexedFiles = new Set(parsed.indexedFiles || this.vectors.map(v => v.filePath));
+            }
         } catch (e) {
             this.vectors = [];
+            this.indexedFiles = new Set();
         }
     }
 
@@ -44,7 +53,11 @@ export class VectorStore {
         }
         const manifestDir = this.plugin.manifest?.dir || '';
         try {
-            await this.plugin.app.vault.adapter.write(`${manifestDir}/${this.dataFile}`, JSON.stringify(this.vectors));
+            const payload = {
+                vectors: this.vectors,
+                indexedFiles: Array.from(this.indexedFiles)
+            };
+            await this.plugin.app.vault.adapter.write(`${manifestDir}/${this.dataFile}`, JSON.stringify(payload));
         } catch (e) {
             console.error('Failed to save vectors', e);
         }
@@ -55,15 +68,14 @@ export class VectorStore {
         if (chunks.length > 0) {
             this.vectors.push(...chunks);
         }
+        this.indexedFiles.add(filePath);
         if (!skipSave) await this.save();
     }
 
     async delete(filePath: string, skipSave: boolean = false) {
-        const initialLen = this.vectors.length;
         this.vectors = this.vectors.filter(v => v.filePath !== filePath);
-        if (this.vectors.length !== initialLen && !skipSave) {
-            await this.save();
-        }
+        this.indexedFiles.delete(filePath);
+        if (!skipSave) await this.save();
     }
 
     async renameFile(oldPath: string, newPath: string, skipSave: boolean = false) {
@@ -75,21 +87,26 @@ export class VectorStore {
                 changed = true;
             }
         }
+        if (this.indexedFiles.has(oldPath)) {
+            this.indexedFiles.delete(oldPath);
+            this.indexedFiles.add(newPath);
+            changed = true;
+        }
         if (changed && !skipSave) await this.save();
     }
 
     async clear(skipSave: boolean = false) {
         this.vectors = [];
+        this.indexedFiles.clear();
         if (!skipSave) await this.save();
     }
 
     hasFile(filePath: string): boolean {
-        return this.vectors.some(v => v.filePath === filePath);
+        return this.indexedFiles.has(filePath);
     }
 
     getFileCount(): number {
-        const uniqueFiles = new Set(this.vectors.map(v => v.filePath));
-        return uniqueFiles.size;
+        return this.indexedFiles.size;
     }
 
     getFileHash(filePath: string): string | undefined {

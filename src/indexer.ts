@@ -51,15 +51,19 @@ export class BackgroundIndexer {
             const file = this.queue.shift();
             if (!file) continue;
 
+            let madeNetworkCall = false;
+
             try {
                 // Check if file was somehow deleted while waiting
                 if (!(await this.plugin.app.vault.adapter.exists(file.path))) {
+                    this.processedFiles++;
+                    this.progressUi.update(this.processedFiles, file.name);
                     continue;
                 }
 
                 const ext = file.extension.toLowerCase();
                 let cleanText = '';
-                let madeNetworkCall = false;
+                let shouldSkip = false;
 
                 if (ext === 'md') {
                     const parsed = await this.plugin.parser.parse(file);
@@ -71,7 +75,7 @@ export class BackgroundIndexer {
                         cleanText = data.text;
                     } catch (e) {
                         console.error(`Failed to parse PDF ${file.path}`, e);
-                        continue;
+                        shouldSkip = true;
                     }
                 } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
                     try {
@@ -80,62 +84,65 @@ export class BackgroundIndexer {
                             cleanText = await this.plugin.visionExtractor.extractImageText(file);
                             madeNetworkCall = true;
                         } else {
-                            continue;
+                            shouldSkip = true;
                         }
                     } catch (e) {
                         console.error(`Failed OCR on Image ${file.path}`, e);
-                        continue;
+                        shouldSkip = true;
                     }
                 }
 
-                if (!cleanText || cleanText.trim() === '') continue;
-                
-                // 2. Embed
-                const contentHash = hashString(cleanText);
-                const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
-                let firstEmbedding: number[] | null = null;
-                const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
-                    const embedding = await this.plugin.embeddingPipeline.embed(text);
-                    madeNetworkCall = true;
-                    if (i === 0) firstEmbedding = embedding;
-                    return { id: `${file.path}#${i}`, filePath: file.path, text, embedding, contentHash };
-                }));
-                await this.plugin.vectorStore.upsert(file.path, vectorChunks, true);
-                
-                // 3. Extract Relations (only if it has similar notes to compare to, and only for markdown files)
-                if (ext === 'md' && firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
-                    const similar = this.plugin.vectorStore.querySimilar(firstEmbedding, 3, file.path);
-                    if (similar.length > 0) {
-                        const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
-                        const prompt = this.plugin.relationExtractor.constructPrompt(file.path, cleanText, candidates);
-                        const { edges, profileInsights } = await this.plugin.relationExtractor.extractRelations(prompt, file.path);
+                if (shouldSkip || !cleanText || cleanText.trim() === '') {
+                    // Mark as indexed with 0 chunks so we don't process it on every startup
+                    await this.plugin.vectorStore.upsert(file.path, [], true);
+                } else {
+                    // 2. Embed
+                    const contentHash = hashString(cleanText);
+                    const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
+                    let firstEmbedding: number[] | null = null;
+                    const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
+                        const embedding = await this.plugin.embeddingPipeline.embed(text);
                         madeNetworkCall = true;
-                        
-                        if (profileInsights) {
-                            await this.plugin.userProfileManager.addInsight(profileInsights);
+                        if (i === 0) firstEmbedding = embedding;
+                        return { id: `${file.path}#${i}`, filePath: file.path, text, embedding, contentHash };
+                    }));
+                    await this.plugin.vectorStore.upsert(file.path, vectorChunks, true);
+                    
+                    // 3. Extract Relations (only if it has similar notes to compare to, and only for markdown files)
+                    if (ext === 'md' && firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
+                        const similar = this.plugin.vectorStore.querySimilar(firstEmbedding, 3, file.path);
+                        if (similar.length > 0) {
+                            const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
+                            const prompt = this.plugin.relationExtractor.constructPrompt(file.path, cleanText, candidates);
+                            const { edges, profileInsights } = await this.plugin.relationExtractor.extractRelations(prompt, file.path);
+                            madeNetworkCall = true;
+                            
+                            if (profileInsights) {
+                                await this.plugin.userProfileManager.addInsight(profileInsights);
+                            }
+
+                            // Compute final scores
+                            const scoredEdges = edges.map(edge => {
+                                const targetFile = this.plugin.app.vault.getAbstractFileByPath(edge.target);
+                                if (!(targetFile instanceof TFile)) return edge;
+                                
+                                const simMatch = similar.find(s => s.filePath === edge.target);
+                                const cosine = simMatch ? simMatch.similarity : 0;
+                                
+                                edge.scores = this.plugin.scoringEngine.calculateOverallScore(file, targetFile, cosine, edge.confidence);
+                                return edge;
+                            });
+
+                            await this.plugin.relationStore.upsertEdges(file.path, scoredEdges, true);
+                            
+                            // Process Backlinks
+                            await this.plugin.backlinkManager.processEdges(file, edges);
+                        } else {
+                            await this.plugin.userProfileManager.addActivity(cleanText);
                         }
-
-                        // Compute final scores
-                        const scoredEdges = edges.map(edge => {
-                            const targetFile = this.plugin.app.vault.getAbstractFileByPath(edge.target);
-                            if (!(targetFile instanceof TFile)) return edge;
-                            
-                            const simMatch = similar.find(s => s.filePath === edge.target);
-                            const cosine = simMatch ? simMatch.similarity : 0;
-                            
-                            edge.scores = this.plugin.scoringEngine.calculateOverallScore(file, targetFile, cosine, edge.confidence);
-                            return edge;
-                        });
-
-                        await this.plugin.relationStore.upsertEdges(file.path, scoredEdges, true);
-                        
-                        // Process Backlinks
-                        await this.plugin.backlinkManager.processEdges(file, edges);
-                    } else {
+                    } else if (ext === 'md') {
                         await this.plugin.userProfileManager.addActivity(cleanText);
                     }
-                } else if (ext === 'md') {
-                    await this.plugin.userProfileManager.addActivity(cleanText);
                 }
             } catch (e) {
                 console.error(`[RelationPlugin] Failed to index ${file.path}`, e);
