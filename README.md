@@ -5,6 +5,8 @@ An intelligent, privacy-first Obsidian plugin that seamlessly finds semantic rel
 ## Features
 
 - **Semantic Relation Extraction**: Uses LLMs to find deep, non-obvious relationships between your notes, going beyond simple keyword matching.
+- **Smart RAG Chat**: Chat with your vault! The AI intelligently scans your notes and uses Retrieval-Augmented Generation (RAG) to answer questions based entirely on your personal data.
+- **Interactive Beautify Command**: Heavy AI-powered copyediting for your active note. Not only fixes grammar, but organically weaves in `[[backlinks]]` to your other notes using RAG context, and formats tasks into interactive checklists (`- [ ]`) and data into tables.
 - **Vision & Local OCR**: Can read text within images (`.png`, `.jpg`, `.webp`) to find relations between visual content and text notes.
 - **AI User Profile**: Automatically observes what you write to construct an evolving AI profile, allowing the LLM to learn your context, personality, and tone.
 - **Automatic Backlinker**: Injects discovered semantic relations into the YAML frontmatter (`ai_relations`) of your notes.

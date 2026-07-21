@@ -1,4 +1,4 @@
-import { Plugin, TFile, WorkspaceLeaf } from 'obsidian';
+import { Plugin, TFile, WorkspaceLeaf, MarkdownView, Notice } from 'obsidian';
 import { PluginSettings, DEFAULT_SETTINGS } from './types';
 import { RelationSettingTab } from './settings';
 import { Watcher } from './watcher';
@@ -18,6 +18,7 @@ import { LocalOcr } from './localOcr';
 import { SEARCH_VIEW_TYPE, SemanticSearchView } from './searchView';
 import { UserProfileManager } from './userProfile';
 import { ChatView, CHAT_VIEW_TYPE } from './chatView';
+import { LLMService } from './llmService';
 
 export default class LumosPlugin extends Plugin {
 	settings: PluginSettings;
@@ -33,6 +34,7 @@ export default class LumosPlugin extends Plugin {
 	visionExtractor: VisionExtractor;
 	localOcr: LocalOcr;
 	userProfileManager: UserProfileManager;
+	llmService: LLMService;
 
 	async onload() {
 		console.log('lumos loaded');
@@ -73,8 +75,42 @@ export default class LumosPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'beautify-current-page',
+			name: 'Beautify Current Page',
+			callback: async () => {
+				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+				if (!view) {
+					new Notice('No active Markdown view found.');
+					return;
+				}
+
+				const editor = view.editor;
+				const text = editor.getValue();
+				if (!text.trim()) {
+					new Notice('Page is empty.');
+					return;
+				}
+
+				new Notice('Beautifying page...');
+				try {
+					const beautifiedText = await this.llmService.beautifyText(text);
+					if (beautifiedText && beautifiedText.trim()) {
+						editor.setValue(beautifiedText);
+						new Notice('Page beautified!');
+					} else {
+						new Notice('Failed to beautify: LLM returned empty text.');
+					}
+				} catch (e) {
+					console.error('[Lumos] Beautify failed', e);
+					new Notice('Failed to beautify page. Check console.');
+				}
+			}
+		});
+
 		this.watcher = new Watcher(this.app);
 		this.parser = new Parser(this.app);
+		this.llmService = new LLMService(this);
 		this.vectorStore = new VectorStore(this);
 		await this.vectorStore.load();
 		this.embeddingPipeline = new EmbeddingPipeline(this.settings);

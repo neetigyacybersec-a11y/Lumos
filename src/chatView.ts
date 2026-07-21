@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, setIcon } from 'obsidian';
 import LumosPlugin from './main';
-import { ChatLogic, ChatMessage } from './chatLogic';
+import { ChatLogic } from './chatLogic';
+import { ChatMessage } from './llmService';
 
 export const CHAT_VIEW_TYPE = 'relation-chat-view';
 

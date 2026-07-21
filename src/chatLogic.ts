@@ -1,10 +1,6 @@
-import { requestUrl, TFile } from 'obsidian';
+import { TFile } from 'obsidian';
 import LumosPlugin from './main';
-
-export interface ChatMessage {
-    role: 'user' | 'assistant' | 'system';
-    content: string;
-}
+import { ChatMessage } from './llmService';
 
 export class ChatLogic {
     // We maintain a sliding window of the last 10 messages for context
@@ -15,42 +11,6 @@ export class ChatLogic {
 
     constructor(plugin: LumosPlugin) {
         this.plugin = plugin;
-    }
-
-    private async callLLM(messages: ChatMessage[], isRouting: boolean = false): Promise<string> {
-        let resultText = '';
-        if (this.plugin.settings.provider === 'ollama') {
-            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/api/chat';
-            const res = await requestUrl({
-                url,
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: this.plugin.settings.llmModelName || 'llama3',
-                    messages: messages,
-                    stream: false
-                })
-            });
-            if (res.status !== 200) throw new Error('Ollama generation failed');
-            resultText = res.json.message.content;
-        } else {
-            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/chat/completions';
-            const res = await requestUrl({
-                url,
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.plugin.settings.apiKey}`
-                },
-                body: JSON.stringify({
-                    model: this.plugin.settings.llmModelName || 'meta-llama/llama-3-8b-instruct',
-                    messages: messages
-                })
-            });
-            if (res.status !== 200) throw new Error('OpenRouter generation failed');
-            resultText = res.json.choices[0].message.content;
-        }
-        return resultText;
     }
 
     async generateResponse(query: string, history: ChatMessage[]): Promise<string> {
@@ -64,7 +24,7 @@ export class ChatLogic {
                     { role: 'user', content: query }
                 ];
                 
-                const searchDecision = await this.callLLM(searchDeciderPrompt, true);
+                const searchDecision = await this.plugin.llmService.callLLM(searchDeciderPrompt, true);
                 
                 if (searchDecision && !searchDecision.includes('NO_SEARCH')) {
                     const cleanQuery = searchDecision.replace(/["']/g, '').trim();
@@ -136,7 +96,7 @@ Disclaimer: If the user expresses intent to harm themselves or others, drop the 
             ];
 
             // 5. API Call
-            const resultText = await this.callLLM(messages);
+            const resultText = await this.plugin.llmService.callLLM(messages);
 
             return resultText;
         } catch (error) {

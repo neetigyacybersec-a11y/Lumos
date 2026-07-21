@@ -172,7 +172,7 @@ export class RelationSidebarView extends ItemView {
         };
 
         if (strongEdges.length > 0) {
-            renderEdgeList(strongEdges, container);
+            renderEdgeList(strongEdges, container as HTMLElement);
         } else {
             container.createEl('p', { text: 'No strong relations found.' });
         }
@@ -184,7 +184,7 @@ export class RelationSidebarView extends ItemView {
             summary.style.cursor = 'pointer';
             summary.style.fontWeight = 'bold';
             
-            renderEdgeList(weakEdges, details);
+            renderEdgeList(weakEdges, details as HTMLElement);
         }
     }
 }
