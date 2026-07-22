@@ -14,6 +14,10 @@ export interface PluginSettings {
 	userProfilePath: string;
 	userProfileWordThreshold: number;
 	ignoredFolders: string;
+	googleClientId: string;
+	googleClientSecret: string;
+	googleRefreshToken: string;
+	googleSyncEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -29,6 +33,10 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	userProfilePath: 'User_Profile_AI.md',
 	userProfileWordThreshold: 500,
 	ignoredFolders: 'Private, Secrets, .obsidian',
+	googleClientId: '',
+	googleClientSecret: '',
+	googleRefreshToken: '',
+	googleSyncEnabled: false,
 }
 
 export interface QueuedFile {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { VectorStore, cosineSimilarity } from '../src/vectorStore';
 import { EmbeddingPipeline } from '../src/embeddings';
+import { PluginSettings } from '../src/types';
 
 describe('VectorStore and Embeddings', () => {
 	it('calculates cosine similarity correctly', () => {
@@ -16,8 +17,10 @@ describe('VectorStore and Embeddings', () => {
 		const pipeline = new EmbeddingPipeline({
 			provider: 'ollama',
 			baseUrl: 'http://localhost:11434',
-			modelName: ''
-		});
+			llmModelName: 'nomic-embed-text',
+			visionModelName: 'llava',
+			embeddingModelName: 'nomic-embed-text'
+		} as unknown as PluginSettings);
 		
 		const text = "Para 1\n\nPara 2\n\nPara 3\n\nPara 4";
 		// Force small token size to trigger multiple chunks
@@ -48,7 +51,7 @@ describe('VectorStore and Embeddings', () => {
 			{ id: '3#0', filePath: '3.md', text: 'car', embedding: [0, 1, 0] }
 		]);
 
-		const results = store.querySimilar([1, 0, 0], 2);
+		const results = await store.querySimilar([1, 0, 0], 2);
 		expect(results).toHaveLength(2);
 		expect(results[0].filePath).toBe('1.md'); // Perfect match
 		expect(results[1].filePath).toBe('2.md'); // Close match
@@ -59,12 +62,12 @@ describe('VectorStore and Embeddings', () => {
 			{ id: '1#1', filePath: '1.md', text: 'meow', embedding: [0.8, 0.2, 0] }
 		]);
 		
-		const allFor1 = store.querySimilar([0.8, 0.2, 0], 5).filter(x => x.filePath === '1.md');
+		const allFor1 = (await store.querySimilar([0.8, 0.2, 0], 5)).filter(x => x.filePath === '1.md');
 		expect(allFor1).toHaveLength(1); // querySimilar now returns unique files, so we only get the best chunk for 1.md
 
 		// Delete
 		await store.delete('1.md');
-		const remaining = store.querySimilar([1, 0, 0], 5);
+		const remaining = await store.querySimilar([1, 0, 0], 5);
 		expect(remaining.find(x => x.filePath === '1.md')).toBeUndefined();
 	});
 });

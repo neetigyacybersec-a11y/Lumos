@@ -52,8 +52,14 @@ export class RelationStore {
             this.saveTimeout = null;
         }
         const manifestDir = this.plugin.manifest?.dir || '';
+        const tempPath = `${manifestDir}/${this.dataFile}.tmp`;
+        const finalPath = `${manifestDir}/${this.dataFile}`;
         try {
-            await this.plugin.app.vault.adapter.write(`${manifestDir}/${this.dataFile}`, JSON.stringify(this.edges));
+            await this.plugin.app.vault.adapter.write(tempPath, JSON.stringify(this.edges));
+            if (await this.plugin.app.vault.adapter.exists(finalPath)) {
+                await this.plugin.app.vault.adapter.remove(finalPath);
+            }
+            await this.plugin.app.vault.adapter.rename(tempPath, finalPath);
         } catch (e) {
             console.error('Failed to save relations', e);
         }

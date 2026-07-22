@@ -3,7 +3,9 @@ import LumosPlugin from './main';
 import { RELATION_VIEW_TYPE, RelationSidebarView } from './sidebarView';
 import { hashString, isPathIgnored } from './utils';
 import { IndexingProgressUI } from './progressUi';
-const pdfParse = require('pdf-parse');
+import { fetchAllCalendarEvents, GoogleEvent } from './googleCalendar';
+import { TerminalApiError, TransientApiError } from './llmService';
+
 
 export class BackgroundIndexer {
     plugin: LumosPlugin;
@@ -19,6 +21,8 @@ export class BackgroundIndexer {
     }
 
     async start() {
+        if (this.isProcessing) return;
+        
         const files = this.plugin.app.vault.getFiles();
         let added = 0;
         
@@ -40,6 +44,11 @@ export class BackgroundIndexer {
             this.progressUi.show(this.totalFiles);
             this.processQueue();
         }
+        
+        // After starting the queue for files, let's also fetch and index calendar events
+        if (this.plugin.settings.googleSyncEnabled && this.plugin.settings.googleRefreshToken) {
+            this.indexCalendarEvents();
+        }
     }
 
     async processQueue() {
@@ -47,9 +56,15 @@ export class BackgroundIndexer {
         this.isProcessing = true;
         this.plugin.userProfileManager.pauseUpdates();
 
-        while (this.queue.length > 0) {
-            const file = this.queue.shift();
-            if (!file) continue;
+        let retryCount = 0;
+        let cursor = 0;
+
+        while (cursor < this.queue.length) {
+            const file = this.queue[cursor];
+            if (!file) {
+                cursor++;
+                continue;
+            }
 
             let madeNetworkCall = false;
 
@@ -57,7 +72,7 @@ export class BackgroundIndexer {
                 // Check if file was somehow deleted while waiting
                 if (!(await this.plugin.app.vault.adapter.exists(file.path))) {
                     this.processedFiles++;
-                    this.progressUi.update(this.processedFiles, file.name);
+                    this.progressUi.update(this.processedFiles, this.totalFiles, file.path);
                     continue;
                 }
 
@@ -70,9 +85,7 @@ export class BackgroundIndexer {
                     cleanText = parsed.cleanText;
                 } else if (ext === 'pdf') {
                     try {
-                        const buffer = await this.plugin.app.vault.readBinary(file);
-                        const data = await pdfParse(Buffer.from(buffer));
-                        cleanText = data.text;
+                        cleanText = await this.plugin.parser.parsePdf(file);
                     } catch (e) {
                         console.error(`Failed to parse PDF ${file.path}`, e);
                         shouldSkip = true;
@@ -94,10 +107,17 @@ export class BackgroundIndexer {
 
                 if (shouldSkip || !cleanText || cleanText.trim() === '') {
                     // Mark as indexed with 0 chunks so we don't process it on every startup
-                    await this.plugin.vectorStore.upsert(file.path, [], true);
+                    await this.plugin.vectorStore.upsert(file.path, []);
                 } else {
-                    // 2. Embed
                     const contentHash = hashString(cleanText);
+                    if (this.plugin.vectorStore.getFileHash(file.path) === contentHash) {
+                        console.log(`[Lumos] Skipping ${file.path} as content hash matches.`);
+                        this.processedFiles++;
+                        this.progressUi.update(this.processedFiles, this.totalFiles, file.name);
+                        continue;
+                    }
+                    
+                    // 2. Embed
                     const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
                     let firstEmbedding: number[] | null = null;
                     const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
@@ -106,11 +126,11 @@ export class BackgroundIndexer {
                         if (i === 0) firstEmbedding = embedding;
                         return { id: `${file.path}#${i}`, filePath: file.path, text, embedding, contentHash };
                     }));
-                    await this.plugin.vectorStore.upsert(file.path, vectorChunks, true);
+                    await this.plugin.vectorStore.upsert(file.path, vectorChunks);
                     
-                    // 3. Extract Relations (only if it has similar notes to compare to, and only for markdown files)
-                    if (ext === 'md' && firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
-                        const similar = this.plugin.vectorStore.querySimilar(firstEmbedding, 3, file.path);
+                    // 3. Extract Relations (only if it has similar notes to compare to)
+                    if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
+                        const similar = await this.plugin.vectorStore.querySimilar(firstEmbedding, 3, file.path);
                         if (similar.length > 0) {
                             const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
                             const prompt = this.plugin.relationExtractor.constructPrompt(file.path, cleanText, candidates);
@@ -136,7 +156,9 @@ export class BackgroundIndexer {
                             await this.plugin.relationStore.upsertEdges(file.path, scoredEdges, true);
                             
                             // Process Backlinks
-                            await this.plugin.backlinkManager.processEdges(file, edges);
+                            if (ext === 'md') {
+                                await this.plugin.backlinkManager.processEdges(file, edges);
+                            }
                         } else {
                             await this.plugin.userProfileManager.addActivity(cleanText);
                         }
@@ -144,17 +166,38 @@ export class BackgroundIndexer {
                         await this.plugin.userProfileManager.addActivity(cleanText);
                     }
                 }
+                retryCount = 0; // Success, reset retries
             } catch (e) {
-                console.error(`[RelationPlugin] Failed to index ${file.path}`, e);
+                if (e instanceof TerminalApiError) {
+                    console.error(`[Lumos] Terminal API Error. Circuit breaking:`, e);
+                    this.queue = this.queue.slice(cursor); // Preserve remaining queue
+                    this.isProcessing = false;
+                    this.progressUi.hide();
+                    new Notice(`🚨 LLM Indexing Halted: ${e.message}`, 15000);
+                    return; // Halt completely
+                } else if (e instanceof TransientApiError && retryCount < 3) {
+                    console.warn(`[Lumos] Transient API Error. Retrying (Attempt ${retryCount + 1})...`, e);
+                    retryCount++;
+                    const delay = 2000 * Math.pow(2, retryCount);
+                    new Notice(`Network error, retrying in ${delay/1000}s...`, delay);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue; // Skip the rest, loop will pull the same file again (cursor not incremented)
+                } else {
+                    console.error(`[RelationPlugin] Failed to index ${file.path}`, e);
+                    // Mark as processed with 0 chunks to prevent infinite poison-pill retry loops on startup
+                    await this.plugin.vectorStore.upsert(file.path, []);
+                    retryCount = 0;
+                    cursor++; // Move past the poison pill
+                }
             }
 
             this.processedFiles++;
-            this.progressUi.update(this.processedFiles, file.name);
+            this.progressUi.update(this.processedFiles, this.totalFiles, file.name);
+            cursor++; // Move to next file on success
 
             // Batch save every 10 files to avoid data loss while preventing I/O thrashing
             if (this.processedFiles % 10 === 0) {
-                await this.plugin.vectorStore.forceSave();
-                await this.plugin.relationStore.forceSave();
+                // await this.plugin.relationStore.forceSave();
             }
 
             // Sleep a bit to avoid hitting rate limits, but ONLY if we actually made a network call
@@ -163,8 +206,10 @@ export class BackgroundIndexer {
             }
         }
 
+        // Clean up queue when fully processed
+        this.queue = [];
+
         // Final forced save once everything is queued
-        await this.plugin.vectorStore.forceSave();
         await this.plugin.relationStore.forceSave();
 
         // Ensure profile file exists so the user knows where it is
@@ -185,6 +230,109 @@ export class BackgroundIndexer {
         for (const leaf of leaves) {
             if (leaf.view instanceof RelationSidebarView) {
                 leaf.view.render();
+            }
+        }
+    }
+
+    async indexCalendarEvents() {
+        if (!this.plugin.settings.googleSyncEnabled) return;
+        
+        const events = await fetchAllCalendarEvents(this.plugin);
+        if (events.length === 0) return;
+        
+        let processedCount = 0;
+        let retryCount = 0;
+        let cursor = 0;
+        
+        while (cursor < events.length) {
+            const event = events[cursor];
+            if (!event) {
+                cursor++;
+                continue;
+            }
+            const virtualPath = `gcal://${event.id}`;
+            const startDate = event.start.dateTime ? new Date(event.start.dateTime).toLocaleString() : event.start.date;
+            let cleanText = `[Google Calendar Event]\nTitle: ${event.summary}\nDate: ${startDate}\n`;
+            if (event.description) cleanText += `Description: ${event.description}\n`;
+            if (event.attendees && event.attendees.length > 0) {
+                const attendees = event.attendees.map(a => a.displayName || a.email).join(', ');
+                cleanText += `Attendees: ${attendees}\n`;
+            }
+            
+            const contentHash = hashString(cleanText);
+
+            if (this.plugin.vectorStore.getFileHash(virtualPath) === contentHash) {
+                continue;
+            }
+
+            try {
+                // Embed
+                const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
+                let firstEmbedding: number[] | null = null;
+                const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
+                    const embedding = await this.plugin.embeddingPipeline.embed(text);
+                    if (i === 0) firstEmbedding = embedding;
+                    return { id: `${virtualPath}#${i}`, filePath: virtualPath, text, embedding, contentHash };
+                }));
+                await this.plugin.vectorStore.upsert(virtualPath, vectorChunks);
+                
+                // Extract Relations
+                if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
+                    const similar = await this.plugin.vectorStore.querySimilar(firstEmbedding, 3, virtualPath);
+                    if (similar.length > 0) {
+                        const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
+                        const prompt = this.plugin.relationExtractor.constructPrompt(virtualPath, cleanText, candidates);
+                        const { edges } = await this.plugin.relationExtractor.extractRelations(prompt, virtualPath);
+                        
+                        // We do not compute overall scores for calendar events using the scoring engine because it expects TFile
+                        // Just use confidence
+                        const scoredEdges = edges.map(edge => {
+                            edge.scores = { overall: edge.confidence, llm: edge.confidence, cosine: 0, keyword: 0, folder: 0, recency: 0 };
+                            return edge;
+                        });
+
+                        await this.plugin.relationStore.upsertEdges(virtualPath, scoredEdges, true);
+                    }
+                }
+                processedCount++;
+                
+                if (processedCount % 10 === 0) {
+                // await this.plugin.vectorStore.forceSave();
+                // await this.plugin.relationStore.forceSave();
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 1500)); // Delay for rate limit
+                retryCount = 0;
+            } catch (e) {
+                if (e instanceof TerminalApiError) {
+                    console.error(`[Lumos] Terminal API Error during Calendar Indexing. Circuit breaking:`, e);
+                    new Notice(`🚨 Calendar Indexing Halted: ${e.message}`, 15000);
+                    return; // Halt completely
+                } else if (e instanceof TransientApiError && retryCount < 3) {
+                    console.warn(`[Lumos] Transient API Error. Retrying (Attempt ${retryCount + 1})...`, e);
+                    retryCount++;
+                    const delay = 2000 * Math.pow(2, retryCount);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue; // Skip the rest, loop will pull the event again
+                } else {
+                    console.error(`[RelationPlugin] Failed to index calendar event ${event.summary}`, e);
+                    retryCount = 0;
+                    cursor++; // Move past poison pill event
+                }
+            }
+            cursor++; // Move past processed event
+        }
+        
+        if (processedCount > 0) {
+        // await this.plugin.vectorStore.forceSave();
+        await this.plugin.relationStore.forceSave();
+            new Notice(`[LLM Relations] Indexed ${processedCount} calendar events!`);
+            
+            const leaves = this.plugin.app.workspace.getLeavesOfType(RELATION_VIEW_TYPE);
+            for (const leaf of leaves) {
+                if (leaf.view instanceof RelationSidebarView) {
+                    leaf.view.render();
+                }
             }
         }
     }

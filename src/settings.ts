@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import LumosPlugin from './main';
+import { loginGoogle } from './googleAuth';
 
 export class RelationSettingTab extends PluginSettingTab {
 	plugin: LumosPlugin;
@@ -179,6 +180,68 @@ export class RelationSettingTab extends PluginSettingTab {
 					this.plugin.settings.ignoredFolders = value;
 					await this.plugin.saveSettings();
 				}));
+
+		containerEl.createEl('h3', {text: 'Google Calendar Integration', cls: 'setting-item-heading'});
+
+		new Setting(containerEl)
+			.setName('Enable Google Calendar Sync')
+			.setDesc('Pull events from your Google Calendar to build semantic relations with your notes.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.googleSyncEnabled)
+				.onChange(async (value) => {
+					this.plugin.settings.googleSyncEnabled = value;
+					await this.plugin.saveSettings();
+					this.display();
+				}));
+
+		if (this.plugin.settings.googleSyncEnabled) {
+			new Setting(containerEl)
+				.setName('Google Client ID')
+				.setDesc('Leave blank to use the default public client ID. Otherwise, provide your own GCP OAuth Client ID.')
+				.addText(text => text
+					.setPlaceholder('Your Google Client ID')
+					.setValue(this.plugin.settings.googleClientId)
+					.onChange(async (value) => {
+						this.plugin.settings.googleClientId = value;
+						await this.plugin.saveSettings();
+					}));
+
+			new Setting(containerEl)
+				.setName('Google Client Secret')
+				.setDesc('Only required if you are using your own Client ID.')
+				.addText(text => text
+					.setPlaceholder('Your Google Client Secret')
+					.setValue(this.plugin.settings.googleClientSecret)
+					.onChange(async (value) => {
+						this.plugin.settings.googleClientSecret = value;
+						await this.plugin.saveSettings();
+					}));
+					
+			const loginSetting = new Setting(containerEl)
+				.setName('Google Authentication')
+				.setDesc('Log in to Google to sync your calendar.');
+				
+			if (this.plugin.settings.googleRefreshToken) {
+				loginSetting.setDesc('You are currently logged in to Google.');
+				loginSetting.addButton(btn => btn
+					.setButtonText('Log Out')
+					.setWarning()
+					.onClick(async () => {
+						this.plugin.settings.googleRefreshToken = '';
+						await this.plugin.saveSettings();
+						this.display();
+					}));
+			} else {
+				loginSetting.addButton(btn => btn
+					.setButtonText('Log in with Google')
+					.setCta()
+					.onClick(async () => {
+						await loginGoogle(this.plugin, () => {
+							this.display();
+						});
+					}));
+			}
+		}
 	}
 
 	hide(): void {

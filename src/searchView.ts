@@ -58,7 +58,7 @@ export class SemanticSearchView extends ItemView {
             const queryVector = await this.plugin.embeddingPipeline.embed(query);
             this.resultsContainer.empty();
             
-            const results = this.plugin.vectorStore.querySimilar(queryVector, 10);
+            const results = await this.plugin.vectorStore.querySimilar(queryVector, 10);
             
             if (results.length === 0) {
                 this.resultsContainer.createEl('p', { text: 'No results found.' });
@@ -300,7 +300,7 @@ export class SemanticSearchView extends ItemView {
             
             try {
                 const queryVector = await this.plugin.embeddingPipeline.embed(q);
-                const newResults = this.plugin.vectorStore.querySimilar(queryVector, 5);
+                const newResults = await this.plugin.vectorStore.querySimilar(queryVector, 5);
                 await this.renderChatAndGenerate(newResults, container);
             } catch(err) {
                  console.error(err);

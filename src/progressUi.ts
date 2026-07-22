@@ -26,16 +26,19 @@ export class IndexingProgressUI {
             this.progressBar = track.createDiv({ cls: 'llm-relations-progress-fill' });
         }
         
-        this.update(0, 'Starting...');
+        this.update(0, this.total, 'Starting...');
     }
     
-    update(processed: number, filename: string) {
+    update(processed: number, total: number, filename: string) {
         if (!this.notice || !this.progressBar || !this.statusText) return;
         
-        const percent = this.total === 0 ? 0 : Math.round((processed / this.total) * 100);
-        this.progressBar.style.width = `${percent}%`;
+        this.total = total; // Keep internal state synced just in case
+        const percent = total === 0 ? 0 : Math.round((processed / total) * 100);
         
-        this.statusText.setText(`[${processed}/${this.total}] (${percent}%)\n${filename}`);
+        // Cap visual progress bar width at 100% just in case of race conditions
+        this.progressBar.style.width = `${Math.min(percent, 100)}%`;
+        
+        this.statusText.setText(`[${processed}/${total}] (${percent}%)\n${filename}`);
     }
     
     hide() {

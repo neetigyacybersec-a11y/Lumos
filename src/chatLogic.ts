@@ -13,34 +13,44 @@ export class ChatLogic {
         this.plugin = plugin;
     }
 
-    async generateResponse(query: string, history: ChatMessage[]): Promise<string> {
+    async generateResponse(query: string, history: ChatMessage[], focusFile: TFile | null = null): Promise<string> {
         try {
-            // 1. Smart RAG: Determine if search is needed
+            // 1. Smart RAG: Determine if search is needed, or use focusFile
             let retrievedContext = '';
-            try {
-                const searchDeciderPrompt: ChatMessage[] = [
-                    { role: 'system', content: 'You are an internal routing AI. You must be EXTREMELY AGGRESSIVE about searching the user\'s vault. Unless the user is explicitly saying a generic greeting (like "hello") or a one-word acknowledgment (like "ok"), you MUST output a search query. Output a concise search query (1-5 words) to find related notes. ONLY output exactly "NO_SEARCH" if a search would be completely nonsensical. Only output the query or "NO_SEARCH". Do not explain.' },
-                    ...history,
-                    { role: 'user', content: query }
-                ];
-                
-                const searchDecision = await this.plugin.llmService.callLLM(searchDeciderPrompt, true);
-                
-                if (searchDecision && !searchDecision.includes('NO_SEARCH')) {
-                    const cleanQuery = searchDecision.replace(/["']/g, '').trim();
-                    console.log('[ChatLogic] Smart RAG triggering search for:', cleanQuery);
-                    const queryEmbedding = await this.plugin.embeddingPipeline.embed(cleanQuery);
-                    // Top 3 similar chunks
-                    const similar = this.plugin.vectorStore.querySimilar(queryEmbedding, 3);
-                    if (similar.length > 0) {
-                        retrievedContext = similar.map(c => `File: ${c.filePath}\nContent:\n${c.text}`).join('\n\n---\n\n');
-                    }
-                } else {
-                    console.log('[ChatLogic] Smart RAG determined no search needed.');
+            
+            if (focusFile) {
+                try {
+                    retrievedContext = await this.plugin.app.vault.read(focusFile);
+                    console.log('[ChatLogic] Using focusFile as context:', focusFile.path);
+                } catch (e) {
+                    console.error('[ChatLogic] Failed to read focusFile:', e);
                 }
-            } catch (e) {
-                console.error('[ChatLogic] Failed to retrieve RAG context:', e);
-                // Non-fatal, continue without RAG
+            } else {
+                try {
+                    const searchDeciderPrompt: ChatMessage[] = [
+                        { role: 'system', content: 'You are an internal routing AI. You must be EXTREMELY AGGRESSIVE about searching the user\'s vault. Unless the user is explicitly saying a generic greeting (like "hello") or a one-word acknowledgment (like "ok"), you MUST output a search query. Output a concise search query (1-5 words) to find related notes. ONLY output exactly "NO_SEARCH" if a search would be completely nonsensical. Only output the query or "NO_SEARCH". Do not explain.' },
+                        ...history,
+                        { role: 'user', content: query }
+                    ];
+                    
+                    const searchDecision = await this.plugin.llmService.callLLM(searchDeciderPrompt, true);
+                    
+                    if (searchDecision && !searchDecision.includes('NO_SEARCH')) {
+                        const cleanQuery = searchDecision.replace(/["']/g, '').trim();
+                        console.log('[ChatLogic] Smart RAG triggering search for:', cleanQuery);
+                        const queryEmbedding = await this.plugin.embeddingPipeline.embed(cleanQuery);
+                        // Top 3 similar chunks
+                        const similar = await this.plugin.vectorStore.querySimilar(queryEmbedding, 3);
+                        if (similar.length > 0) {
+                            retrievedContext = similar.map(c => `File: ${c.filePath}\nContent:\n${c.text}`).join('\n\n---\n\n');
+                        }
+                    } else {
+                        console.log('[ChatLogic] Smart RAG determined no search needed.');
+                    }
+                } catch (e) {
+                    console.error('[ChatLogic] Failed to retrieve RAG context:', e);
+                    // Non-fatal, continue without RAG
+                }
             }
 
             // 2. Profile: Retrieve User Profile

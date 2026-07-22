@@ -26,7 +26,7 @@ export class Watcher {
 			this.app.vault.on('modify', (file) => this.handleEvent(file)),
 			this.app.vault.on('create', (file) => this.handleEvent(file)),
 			this.app.vault.on('rename', (file, oldPath) => {
-				if (file instanceof TFile && file.extension === 'md') {
+				if (file instanceof TFile && ['md', 'pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(file.extension.toLowerCase())) {
 					if (this.onRenameCallback) {
 						this.onRenameCallback(file, oldPath);
 					}
@@ -62,7 +62,7 @@ export class Watcher {
 	}
 
 	handleEvent(file: TAbstractFile) {
-		if (!(file instanceof TFile) || file.extension !== 'md') return;
+		if (!(file instanceof TFile) || !['md', 'pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(file.extension.toLowerCase())) return;
 		
 		if (this.debounceTimers.has(file.path)) {
 			clearTimeout(this.debounceTimers.get(file.path));

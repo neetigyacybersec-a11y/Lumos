@@ -8,77 +8,119 @@ export interface VectorChunk {
     contentHash?: string;
 }
 
+const DB_NAME = 'LumosDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'vectors';
+
+function openDB(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = (e: any) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                store.createIndex('filePath', 'filePath', { unique: false });
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
 export class VectorStore {
     private plugin: Plugin;
     private vectors: VectorChunk[] = [];
     private indexedFiles: Set<string> = new Set();
-    private dataFile = 'vectors.json';
-    private saveTimeout: any = null;
+    private db: IDBDatabase | null = null;
 
     constructor(plugin: Plugin) {
         this.plugin = plugin;
     }
 
     async load() {
-        const manifestDir = this.plugin.manifest?.dir || '';
-        const data = await this.plugin.app.vault.adapter.read(`${manifestDir}/${this.dataFile}`).catch(() => '[]');
         try {
-            const parsed = JSON.parse(data);
-            if (Array.isArray(parsed)) {
-                this.vectors = parsed;
-                this.indexedFiles = new Set(this.vectors.map(v => v.filePath));
-            } else {
-                this.vectors = parsed.vectors || [];
-                this.indexedFiles = new Set(parsed.indexedFiles || this.vectors.map(v => v.filePath));
-            }
+            this.db = await openDB();
+            
+            // Load all vectors into memory for fast querying
+            return new Promise<void>((resolve, reject) => {
+                const transaction = this.db!.transaction(STORE_NAME, 'readonly');
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.getAll();
+                
+                request.onsuccess = () => {
+                    this.vectors = request.result || [];
+                    this.indexedFiles = new Set(this.vectors.map(v => v.filePath));
+                    resolve();
+                };
+                request.onerror = () => reject(request.error);
+            });
         } catch (e) {
+            console.error('Failed to load VectorStore from IndexedDB', e);
             this.vectors = [];
             this.indexedFiles = new Set();
         }
     }
 
-    async save() {
-        if (this.saveTimeout) {
-            clearTimeout(this.saveTimeout);
-        }
-        this.saveTimeout = setTimeout(async () => {
-            await this.forceSave();
-        }, 1000);
-    }
-
-    async forceSave() {
-        if (this.saveTimeout) {
-            clearTimeout(this.saveTimeout);
-            this.saveTimeout = null;
-        }
-        const manifestDir = this.plugin.manifest?.dir || '';
-        try {
-            const payload = {
-                vectors: this.vectors,
-                indexedFiles: Array.from(this.indexedFiles)
-            };
-            await this.plugin.app.vault.adapter.write(`${manifestDir}/${this.dataFile}`, JSON.stringify(payload));
-        } catch (e) {
-            console.error('Failed to save vectors', e);
-        }
-    }
-
-    async upsert(filePath: string, chunks: VectorChunk[], skipSave: boolean = false) {
+    async upsert(filePath: string, chunks: VectorChunk[]) {
+        // Update memory
         this.vectors = this.vectors.filter(v => v.filePath !== filePath);
         if (chunks.length > 0) {
             this.vectors.push(...chunks);
         }
         this.indexedFiles.add(filePath);
-        if (!skipSave) await this.save();
+
+        // Update IndexedDB
+        if (this.db) {
+            return new Promise<void>((resolve, reject) => {
+                const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
+                const store = transaction.objectStore(STORE_NAME);
+                const index = store.index('filePath');
+                const keyReq = index.getAllKeys(filePath);
+                
+                keyReq.onsuccess = () => {
+                    const keys = keyReq.result;
+                    for (const key of keys) {
+                        store.delete(key);
+                    }
+                    for (const chunk of chunks) {
+                        store.put(chunk);
+                    }
+                };
+                
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+        }
     }
 
-    async delete(filePath: string, skipSave: boolean = false) {
+    async delete(filePath: string) {
+        // Update memory
         this.vectors = this.vectors.filter(v => v.filePath !== filePath);
         this.indexedFiles.delete(filePath);
-        if (!skipSave) await this.save();
+
+        // Update IndexedDB
+        if (this.db) {
+            return new Promise<void>((resolve, reject) => {
+                const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
+                const store = transaction.objectStore(STORE_NAME);
+                const index = store.index('filePath');
+                const keyReq = index.getAllKeys(filePath);
+                
+                keyReq.onsuccess = () => {
+                    const keys = keyReq.result;
+                    for (const key of keys) {
+                        store.delete(key);
+                    }
+                };
+                
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+        }
     }
 
-    async renameFile(oldPath: string, newPath: string, skipSave: boolean = false) {
+    async renameFile(oldPath: string, newPath: string) {
+        // Update memory
         let changed = false;
         for (const v of this.vectors) {
             if (v.filePath === oldPath) {
@@ -92,13 +134,45 @@ export class VectorStore {
             this.indexedFiles.add(newPath);
             changed = true;
         }
-        if (changed && !skipSave) await this.save();
+
+        // Update IndexedDB
+        if (this.db && changed) {
+            return new Promise<void>((resolve, reject) => {
+                const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
+                const store = transaction.objectStore(STORE_NAME);
+                const index = store.index('filePath');
+                const req = index.getAll(oldPath);
+                
+                req.onsuccess = () => {
+                    const records = req.result as VectorChunk[];
+                    for (const record of records) {
+                        store.delete(record.id); // Delete old record
+                        record.filePath = newPath;
+                        record.id = record.id.replace(oldPath, newPath);
+                        store.put(record); // Insert new record
+                    }
+                };
+                
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+        }
     }
 
-    async clear(skipSave: boolean = false) {
+    async clear() {
         this.vectors = [];
         this.indexedFiles.clear();
-        if (!skipSave) await this.save();
+
+        if (this.db) {
+            return new Promise<void>((resolve, reject) => {
+                const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
+                const store = transaction.objectStore(STORE_NAME);
+                store.clear();
+                
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+        }
     }
 
     hasFile(filePath: string): boolean {
@@ -114,10 +188,17 @@ export class VectorStore {
         return chunk?.contentHash;
     }
 
-    querySimilar(embedding: number[], topK: number = 5, excludeFilePath?: string): (VectorChunk & { similarity: number })[] {
+    async querySimilar(embedding: number[], topK: number = 5, excludeFilePath?: string): Promise<(VectorChunk & { similarity: number })[]> {
         const fileMaxSim = new Map<string, VectorChunk & { similarity: number }>();
 
-        for (const v of this.vectors) {
+        for (let i = 0; i < this.vectors.length; i++) {
+            const v = this.vectors[i];
+            
+            // Yield to main thread every 500 items to prevent UI freezing
+            if (i > 0 && i % 500 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+
             if (v.filePath === excludeFilePath) continue;
             
             const similarity = cosineSimilarity(embedding, v.embedding);

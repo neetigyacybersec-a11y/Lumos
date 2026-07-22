@@ -63,4 +63,19 @@ export class Parser {
 			tags: [...new Set(tags)]
 		};
 	}
+
+	async parsePdf(file: TFile): Promise<string> {
+		const buffer = await this.app.vault.readBinary(file);
+		const pdfjsLib = (window as any).pdfjsLib;
+		if (!pdfjsLib) throw new Error("pdfjsLib not found on window");
+		
+		const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+		let text = '';
+		for (let i = 1; i <= pdf.numPages; i++) {
+			const page = await pdf.getPage(i);
+			const content = await page.getTextContent();
+			text += content.items.map((item: any) => item.str).join(' ') + '\n';
+		}
+		return text;
+	}
 }

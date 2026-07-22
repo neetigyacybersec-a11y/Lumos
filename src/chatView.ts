@@ -14,6 +14,7 @@ export class ChatView extends ItemView {
     inputEl: HTMLTextAreaElement;
     sendBtn: HTMLButtonElement;
     isGenerating: boolean = false;
+    isFocusMode: boolean = false;
 
     private messageContainerEl: HTMLElement;
     private sendButtonEl: HTMLButtonElement;
@@ -52,6 +53,14 @@ export class ChatView extends ItemView {
         
         const titleContent = titleRow.createEl('div');
         titleContent.createEl('h3', { text: 'AI Assistant' });
+        
+        const toggleBtn = titleRow.createEl('button', { text: '🌐 Vault Mode', cls: 'llm-chat-toggle-btn' });
+        toggleBtn.style.marginLeft = 'auto';
+        toggleBtn.onclick = async () => {
+            this.isFocusMode = !this.isFocusMode;
+            toggleBtn.innerText = this.isFocusMode ? '📄 Note Mode' : '🌐 Vault Mode';
+            await this.appendMessage('assistant', this.isFocusMode ? "Switched to **Note Focus Mode**. I'll only look at the currently open note." : "Switched to **Vault Mode**. I'll search your entire vault for context.");
+        };
         
         const sub = header.createEl('p', { text: 'Personalized by your Vault Profile', cls: 'llm-chat-subtitle' });
 
@@ -104,7 +113,11 @@ export class ChatView extends ItemView {
         this.isGenerating = true;
 
         try {
-            const responseText = await this.chatLogic.generateResponse(text, this.history);
+            let focusFile = null;
+            if (this.isFocusMode) {
+                focusFile = this.plugin.app.workspace.getActiveFile();
+            }
+            const responseText = await this.chatLogic.generateResponse(text, this.history, focusFile);
             
             // Remove typing indicator
             this.removeMessage(typingId);

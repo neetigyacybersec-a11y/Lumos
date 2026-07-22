@@ -1,20 +1,19 @@
-import { PluginSettings } from './types';
-import { requestUrl } from 'obsidian';
 import { RelationEdge } from './relationStore';
+import LumosPlugin from './main';
 
 export class RelationExtractor {
-    settings: PluginSettings;
+    plugin: LumosPlugin;
 
-    constructor(settings: PluginSettings) {
-        this.settings = settings;
+    constructor(plugin: LumosPlugin) {
+        this.plugin = plugin;
     }
 
     constructPrompt(sourcePath: string, sourceText: string, candidates: {path: string, text: string}[]): string {
         const candidateContext = candidates.map(c => `File: ${c.path}\nContent:\n${c.text}`).join('\n\n---\n\n');
         
         return `You are a knowledge graph extraction assistant.
-You are given a Source Note and a list of Candidate Notes.
-Determine the conceptual relationships between the Source Note and the Candidate Notes.
+You are given a Source Note (which could be a markdown file, image, or Calendar Event) and a list of Candidate Notes.
+Determine the conceptual relationships between the Source Note and the Candidate Notes. Note that some candidates might be Google Calendar Events (indicated by [Google Calendar Event] in their content).
 
 Source Note File: ${sourcePath}
 Source Note Content:
@@ -29,7 +28,7 @@ Format your output STRICTLY as a JSON object with two keys: "relations" and "pro
   "relations": [
     {
       "target": "path of the candidate note",
-      "relationType": "duplicate-effort" | "prerequisite" | "contradicts" | "extends" | "thematic-only",
+      "relationType": "duplicate-effort" | "prerequisite" | "contradicts" | "extends" | "thematic-only" | "discusses-meeting" | "follows-up",
       "confidence": 0.8,
       "evidence": "A short snippet or explanation why they relate"
     }
@@ -38,45 +37,20 @@ Format your output STRICTLY as a JSON object with two keys: "relations" and "pro
 }
 
 CRITICAL RULES:
-1. For "relationType", you MUST pick exactly one of these five fixed strings: "duplicate-effort", "prerequisite", "contradicts", "extends", or "thematic-only". Do NOT write freeform prose for relationType.
+1. For "relationType", you MUST pick exactly one of these fixed strings: "duplicate-effort", "prerequisite", "contradicts", "extends", "thematic-only", "discusses-meeting", or "follows-up". Do NOT write freeform prose for relationType.
 2. Output only valid JSON, no markdown formatting or extra text.
 3. If there are no relationships, output {"relations": [], "profileInsights": null}.`;
     }
 
     async extractRelations(prompt: string, sourcePath: string): Promise<{ edges: RelationEdge[], profileInsights: string | null }> {
+        const messages: any[] = [{ role: 'user', content: prompt }];
         let jsonStr = '';
-        if (this.settings.provider === 'ollama') {
-            const url = this.settings.baseUrl.replace(/\/$/, '') + '/api/generate';
-            const res = await requestUrl({
-                url,
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: this.settings.llmModelName || 'llama3',
-                    prompt: prompt,
-                    stream: false,
-                    format: 'json'
-                })
-            });
-            if (res.status !== 200) throw new Error('Ollama generation failed');
-            jsonStr = res.json.response;
-        } else {
-            // OpenRouter OpenAI-compatible endpoint
-            const url = this.settings.baseUrl.replace(/\/$/, '') + '/chat/completions';
-            const res = await requestUrl({
-                url,
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.settings.apiKey}`
-                },
-                body: JSON.stringify({
-                    model: this.settings.llmModelName || 'meta-llama/llama-3-8b-instruct',
-                    messages: [{ role: 'user', content: prompt }]
-                })
-            });
-            if (res.status !== 200) throw new Error('OpenRouter generation failed');
-            jsonStr = res.json.choices[0].message.content;
+        
+        try {
+            jsonStr = await this.plugin.llmService.callLLM(messages, false, true);
+        } catch (e) {
+            console.error('LLM generation failed in relations:', e);
+            return { edges: [], profileInsights: null };
         }
 
         try {
