@@ -66,16 +66,25 @@ export class Parser {
 
 	async parsePdf(file: TFile): Promise<string> {
 		const buffer = await this.app.vault.readBinary(file);
-		const pdfjsLib = (window as any).pdfjsLib;
-		if (!pdfjsLib) throw new Error("pdfjsLib not found on window");
-		
-		const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-		let text = '';
-		for (let i = 1; i <= pdf.numPages; i++) {
-			const page = await pdf.getPage(i);
-			const content = await page.getTextContent();
-			text += content.items.map((item: any) => item.str).join(' ') + '\n';
+		try {
+			// Try to use pdf-parse first, which is reliable in Node/Electron environments
+			// Note: We need to use dynamic import or require to avoid esbuild issues if pdf-parse has node dependencies
+			const pdfParse = require('pdf-parse');
+			const data = await pdfParse(Buffer.from(buffer));
+			return data.text;
+		} catch (e) {
+			console.warn("[Lumos] pdf-parse failed, falling back to window.pdfjsLib if available", e);
+			const pdfjsLib = (window as any).pdfjsLib;
+			if (!pdfjsLib) throw new Error("pdfjsLib not found on window, and pdf-parse failed.");
+			
+			const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+			let text = '';
+			for (let i = 1; i <= pdf.numPages; i++) {
+				const page = await pdf.getPage(i);
+				const content = await page.getTextContent();
+				text += content.items.map((item: any) => item.str).join(' ') + '\n';
+			}
+			return text;
 		}
-		return text;
 	}
 }

@@ -34,12 +34,11 @@ export class BackgroundIndexer {
 
             if (!this.plugin.vectorStore.hasFile(file.path)) {
                 this.queue.push(file);
-                added++;
             }
         }
 
-        if (added > 0) {
-            this.totalFiles = added;
+        if (this.queue.length > 0) {
+            this.totalFiles = this.queue.length;
             this.processedFiles = 0;
             this.progressUi.show(this.totalFiles);
             this.processQueue();
@@ -187,7 +186,7 @@ export class BackgroundIndexer {
                     // Mark as processed with 0 chunks to prevent infinite poison-pill retry loops on startup
                     await this.plugin.vectorStore.upsert(file.path, []);
                     retryCount = 0;
-                    cursor++; // Move past the poison pill
+                    // Removed cursor++ here to prevent double-increment (silent data loss)
                 }
             }
 
@@ -317,7 +316,7 @@ export class BackgroundIndexer {
                 } else {
                     console.error(`[RelationPlugin] Failed to index calendar event ${event.summary}`, e);
                     retryCount = 0;
-                    cursor++; // Move past poison pill event
+                    // Removed cursor++ here to prevent double-increment
                 }
             }
             cursor++; // Move past processed event

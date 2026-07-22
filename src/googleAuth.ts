@@ -12,7 +12,7 @@ function generateState(): string {
 }
 
 async function generateVerifier(): Promise<string> {
-	const array = new Uint32Array(56);
+	const array = new Uint8Array(56);
 	await window.crypto.getRandomValues(array);
 	return Array.from(array, dec => ('0' + dec.toString(16)).substr(-2)).join('');
 }
@@ -124,6 +124,11 @@ export async function loginGoogle(plugin: LumosPlugin, onComplete: () => void): 
 		authSession.challenge = await generateChallenge(authSession.verifier);
 	}
 
+	// Auto-close server if not completed in 5 minutes to prevent port leak
+	setTimeout(() => {
+		closeAuthServer();
+	}, 5 * 60 * 1000);
+
 	const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth'
 		+ `?client_id=${CLIENT_ID}`
 		+ `&response_type=code`
@@ -189,4 +194,16 @@ export async function loginGoogle(plugin: LumosPlugin, onComplete: () => void): 
 		.listen(PORT, async () => {
 			require('electron').shell.openExternal(authUrl);
 		});
+}
+
+export function closeAuthServer() {
+	if (authSession.server) {
+		try {
+			authSession.server.close();
+		} catch (e) {
+			console.error("Failed to close auth server", e);
+		}
+		authSession.server = null;
+	}
+	authSession = { server: null, verifier: null, challenge: null, state: null };
 }

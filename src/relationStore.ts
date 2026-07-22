@@ -46,14 +46,27 @@ export class RelationStore {
         }, 1000);
     }
 
+    private isSaving = false;
+    private savePending = false;
+
     async forceSave() {
         if (this.saveTimeout) {
             clearTimeout(this.saveTimeout);
             this.saveTimeout = null;
         }
+        
+        if (this.isSaving) {
+            this.savePending = true;
+            return;
+        }
+        
+        this.isSaving = true;
+        this.savePending = false;
+        
         const manifestDir = this.plugin.manifest?.dir || '';
         const tempPath = `${manifestDir}/${this.dataFile}.tmp`;
         const finalPath = `${manifestDir}/${this.dataFile}`;
+        
         try {
             await this.plugin.app.vault.adapter.write(tempPath, JSON.stringify(this.edges));
             if (await this.plugin.app.vault.adapter.exists(finalPath)) {
@@ -62,6 +75,11 @@ export class RelationStore {
             await this.plugin.app.vault.adapter.rename(tempPath, finalPath);
         } catch (e) {
             console.error('Failed to save relations', e);
+        } finally {
+            this.isSaving = false;
+            if (this.savePending) {
+                this.forceSave();
+            }
         }
     }
 

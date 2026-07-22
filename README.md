@@ -11,6 +11,8 @@ An intelligent, privacy-first Obsidian plugin that seamlessly finds semantic rel
 - **AI User Profile**: Automatically observes what you write to construct an evolving AI profile, allowing the LLM to learn your context, personality, and tone.
 - **Automatic Backlinker**: Injects discovered semantic relations into the YAML frontmatter (`ai_relations`) of your notes.
 - **Interactive Graph and Sidebar**: Explore your semantic web visually right from the sidebar.
+- **Google Calendar Sync**: Integrates with your Google Calendar to automatically ingest and relate events to your notes!
+- **LumosDB (IndexedDB)**: Features a lightning-fast, highly optimized background indexer with strict concurrency locks and Circuit Breaking, built for massive 100K+ note vaults.
 - **Privacy First**: Explicit **Ignored Folders** settings to ensure your journals, diaries, and sensitive data never hit the cloud.
 
 ## Installation

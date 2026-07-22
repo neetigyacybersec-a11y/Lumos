@@ -76,6 +76,68 @@ export default class LumosPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'force-reindex-current-file',
+			name: 'Force Re-index Current File',
+			callback: async () => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) {
+					new Notice('No active file to re-index.');
+					return;
+				}
+				new Notice(`Re-indexing ${file.name}...`);
+				await this.vectorStore.delete(file.path);
+				await this.relationStore.deleteEdges(file.path);
+				this.indexer.queue.push(file);
+				if (!this.indexer.isProcessing) {
+					this.indexer.totalFiles = this.indexer.queue.length;
+					this.indexer.processedFiles = 0;
+					this.indexer.processQueue();
+				} else {
+					this.indexer.totalFiles = Math.max(this.indexer.totalFiles + 1, this.indexer.queue.length);
+				}
+			}
+		});
+
+		this.addCommand({
+			id: 'retry-failed-files',
+			name: 'Retry Failed/Empty Files',
+			callback: async () => {
+				const allFiles = Array.from(this.vectorStore.indexedFiles);
+				const validFiles = new Set(this.vectorStore.vectors.map(v => v.filePath));
+				const poisonedFiles = allFiles.filter(f => !validFiles.has(f));
+				
+				if (poisonedFiles.length === 0) {
+					new Notice('No failed or empty files found in the index.');
+					return;
+				}
+
+				let queued = 0;
+				for (const filePath of poisonedFiles) {
+					const file = this.app.vault.getAbstractFileByPath(filePath);
+					if (file instanceof TFile) {
+						await this.vectorStore.delete(filePath);
+						await this.relationStore.deleteEdges(filePath);
+						this.indexer.queue.push(file);
+						queued++;
+					}
+				}
+
+				if (queued > 0) {
+					if (!this.indexer.isProcessing) {
+						this.indexer.totalFiles = this.indexer.queue.length;
+						this.indexer.processedFiles = 0;
+						this.indexer.processQueue();
+					} else {
+						this.indexer.totalFiles = Math.max(this.indexer.totalFiles + queued, this.indexer.queue.length);
+					}
+					new Notice(`Queued ${queued} failed/empty files for re-indexing.`);
+				} else {
+					new Notice('Could not find the actual files for the failed entries.');
+				}
+			}
+		});
+
+		this.addCommand({
 			id: 'beautify-current-page',
 			name: 'Beautify Current Page',
 			callback: async () => {
@@ -276,11 +338,11 @@ export default class LumosPlugin extends Plugin {
 			} else {
 				this.indexer.queue.push(file);
 				if (!this.indexer.isProcessing) {
-					this.indexer.totalFiles = 1;
+					this.indexer.totalFiles = this.indexer.queue.length;
 					this.indexer.processedFiles = 0;
 					this.indexer.processQueue();
 				} else {
-					this.indexer.totalFiles++;
+					this.indexer.totalFiles = Math.max(this.indexer.totalFiles + 1, this.indexer.queue.length);
 				}
 			}
 		});
@@ -298,6 +360,8 @@ export default class LumosPlugin extends Plugin {
 		console.log('lumos unloaded');
 		this.watcher.unregister();
 		this.app.workspace.detachLeavesOfType(RELATION_VIEW_TYPE);
+		const { closeAuthServer } = require('./googleAuth');
+		closeAuthServer();
 	}
 
 	async activateView() {
