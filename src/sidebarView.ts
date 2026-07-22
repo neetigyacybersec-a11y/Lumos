@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { ItemView, WorkspaceLeaf } from 'obsidian';
 import LumosPlugin from './main';
 import { getSortedEdgesForPath, formatEdge } from './sidebarLogic';
@@ -161,7 +162,7 @@ export class RelationSidebarView extends ItemView {
                                 try {
                                     await this.app.vault.process(activeFile, (data) => data + calloutText);
                                 } catch (e) {
-                                    console.error('Failed to append callout', e);
+                                    Logger.error('Failed to append callout', e);
                                 }
                             }
                         }
@@ -269,7 +270,7 @@ export class RelationSidebarView extends ItemView {
                         semanticListContainer.empty();
                     }
                 } catch (e) {
-                    console.error('Semantic search failed for sidebar', e);
+                    Logger.error('Semantic search failed for sidebar', e);
                     semanticListContainer.empty();
                     semanticListContainer.createEl('p', { text: 'Failed to load similar notes.' });
                 }

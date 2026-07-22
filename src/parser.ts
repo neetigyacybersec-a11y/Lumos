@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { TFile, App } from 'obsidian';
 import { ParsedNote } from './types';
 
@@ -73,7 +74,7 @@ export class Parser {
 			const data = await pdfParse(Buffer.from(buffer));
 			return data.text;
 		} catch (e) {
-			console.warn("[Lumos] pdf-parse failed, falling back to window.pdfjsLib if available", e);
+			Logger.warn("[Lumos] pdf-parse failed, falling back to window.pdfjsLib if available", e);
 			const pdfjsLib = (window as any).pdfjsLib;
 			if (!pdfjsLib) throw new Error("pdfjsLib not found on window, and pdf-parse failed.");
 			

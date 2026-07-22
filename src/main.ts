@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { Plugin, TFile, WorkspaceLeaf, MarkdownView, Notice } from 'obsidian';
 import { PluginSettings, DEFAULT_SETTINGS } from './types';
 import { RelationSettingTab } from './settings';
@@ -36,8 +37,17 @@ export default class LumosPlugin extends Plugin {
 	userProfileManager: UserProfileManager;
 	llmService: LLMService;
 
+	public activityLog: string[] = [];
+
+	logActivity(message: string) {
+		const timestamp = new Date().toLocaleTimeString();
+		this.activityLog.unshift(`[${timestamp}] ${message}`);
+		if (this.activityLog.length > 50) this.activityLog.pop();
+	}
+
 	async onload() {
-		console.log('lumos loaded');
+		Logger.init(this);
+		Logger.info('lumos loaded');
 		await this.loadSettings();
 		this.addSettingTab(new RelationSettingTab(this.app, this));
 
@@ -164,7 +174,7 @@ export default class LumosPlugin extends Plugin {
 						new Notice('Failed to beautify: LLM returned empty text.');
 					}
 				} catch (e) {
-					console.error('[Lumos] Beautify failed', e);
+					Logger.error('[Lumos] Beautify failed', e);
 					new Notice('Failed to beautify page. Check console.');
 				}
 			}
@@ -207,7 +217,7 @@ export default class LumosPlugin extends Plugin {
 						new Notice('Failed to extract metadata.');
 					}
 				} catch (e) {
-					console.error('[Lumos] Auto-tag failed', e);
+					Logger.error('[Lumos] Auto-tag failed', e);
 					new Notice('Failed to auto-tag page. Check console.');
 				}
 			}
@@ -262,7 +272,7 @@ export default class LumosPlugin extends Plugin {
 						new Notice('Failed to auto-link text.');
 					}
 				} catch (e) {
-					console.error('[Lumos] Auto-link command failed', e);
+					Logger.error('[Lumos] Auto-link command failed', e);
 					new Notice('Failed to auto-link page. Check console.');
 				}
 			}
@@ -300,13 +310,13 @@ export default class LumosPlugin extends Plugin {
                         new Notice('Failed to extract action items.');
                     }
 				} catch (e) {
-					console.error('[Lumos] Extract action items failed', e);
+					Logger.error('[Lumos] Extract action items failed', e);
 					new Notice('Failed to extract action items. Check console.');
 				}
 			}
 		});
 
-		this.watcher = new Watcher(this.app);
+		this.watcher = new Watcher(this);
 		this.parser = new Parser(this.app);
 		this.llmService = new LLMService(this);
 		this.vectorStore = new VectorStore(this);
@@ -357,7 +367,7 @@ export default class LumosPlugin extends Plugin {
 	}
 
 	async onunload() {
-		console.log('lumos unloaded');
+		Logger.info('lumos unloaded');
 		this.watcher.unregister();
 		this.app.workspace.detachLeavesOfType(RELATION_VIEW_TYPE);
 		const { closeAuthServer } = require('./googleAuth');

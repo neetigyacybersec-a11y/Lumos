@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { requestUrl } from 'obsidian';
 import LumosPlugin from './main';
 
@@ -140,7 +141,7 @@ Example output:
             const cleanResult = result.replace(/```json/gi, '').replace(/```/g, '').trim();
             return JSON.parse(cleanResult);
         } catch (e) {
-            console.error('[Lumos] Metadata extraction failed', e);
+            Logger.error('[Lumos] Metadata extraction failed', e);
             return null;
         }
     }
@@ -167,7 +168,7 @@ ${fileListStr}
         try {
             return await this.callLLM(messages);
         } catch (e) {
-            console.error('[Lumos] Auto-link failed', e);
+            Logger.error('[Lumos] Auto-link failed', e);
             return null;
         }
     }
@@ -189,7 +190,7 @@ RULES:
         try {
             return await this.callLLM(messages);
         } catch (e) {
-            console.error('[Lumos] Action item extraction failed', e);
+            Logger.error('[Lumos] Action item extraction failed', e);
             return null;
         }
     }

@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { Notice, Platform, requestUrl } from "obsidian";
 import LumosPlugin from "./main";
 
@@ -52,7 +53,7 @@ export async function refreshAccessToken(plugin: LumosPlugin): Promise<string | 
         });
 
         if (!tokenData || !tokenData.access_token) {
-            console.error("Error while refreshing authentication", tokenData);
+            Logger.error("Error while refreshing authentication", tokenData);
             return null;
         }
         
@@ -60,7 +61,7 @@ export async function refreshAccessToken(plugin: LumosPlugin): Promise<string | 
         tokenExpirationTime = +new Date() + tokenData.expires_in * 1000;
         return cachedAccessToken;
     } catch (e) {
-        console.error("Failed to refresh token", e);
+        Logger.error("Failed to refresh token", e);
         return null;
     }
 }
@@ -186,7 +187,7 @@ export async function loginGoogle(plugin: LumosPlugin, onComplete: () => void): 
                 onComplete();
 
 			} catch (e) {
-				console.error("Auth failed", e);
+				Logger.error("Auth failed", e);
 				authSession.server.close();
 			}
 			authSession = { server: null, verifier: null, challenge: null, state: null };
@@ -201,7 +202,7 @@ export function closeAuthServer() {
 		try {
 			authSession.server.close();
 		} catch (e) {
-			console.error("Failed to close auth server", e);
+			Logger.error("Failed to close auth server", e);
 		}
 		authSession.server = null;
 	}

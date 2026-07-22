@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { requestUrl } from "obsidian";
 import LumosPlugin from "./main";
 import { getGoogleAuthToken } from "./googleAuth";
@@ -65,12 +66,12 @@ export async function fetchAllCalendarEvents(plugin: LumosPlugin, daysBack: numb
                         }
                     } while (pageToken);
                 } catch (e) {
-                    console.error(`Failed to fetch events for calendar ${calendar.summary}`, e);
+                    Logger.error(`Failed to fetch events for calendar ${calendar.summary}`, e);
                 }
             }
         }
     } catch (e) {
-        console.error("Failed to fetch Google Calendars", e);
+        Logger.error("Failed to fetch Google Calendars", e);
     }
     
     return allEvents;

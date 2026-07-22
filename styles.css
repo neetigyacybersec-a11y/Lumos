@@ -232,25 +232,28 @@
     box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2);
 }
 
-.llm-chat-input {
-    width: 100%;
+.llm-chat-input-container textarea.llm-chat-input {
+    width: 100% !important;
     border: none !important;
     background: transparent !important;
     padding: 16px 56px 16px 20px !important;
-    min-height: 56px;
-    max-height: 200px;
+    min-height: 56px !important;
+    max-height: 200px !important;
     resize: none !important;
     box-shadow: none !important;
-    color: var(--text-normal);
-    font-size: var(--font-text-size);
-    line-height: 1.5;
-    overflow-y: auto;
+    color: var(--text-normal) !important;
+    font-size: var(--font-text-size) !important;
+    line-height: 1.5 !important;
+    overflow-y: auto !important;
+    display: block !important;
+    margin: 0 !important;
 }
 
-.llm-chat-input:focus {
+.llm-chat-input-container textarea.llm-chat-input:focus {
     box-shadow: none !important;
     border: none !important;
     outline: none !important;
+    background: transparent !important;
 }
 
 .llm-chat-send-btn {

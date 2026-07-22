@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { TFile } from 'obsidian';
 import LumosPlugin from './main';
 import { ChatMessage } from './llmService';
@@ -21,9 +22,9 @@ export class ChatLogic {
             if (focusFile) {
                 try {
                     retrievedContext = await this.plugin.app.vault.read(focusFile);
-                    console.log('[ChatLogic] Using focusFile as context:', focusFile.path);
+                    Logger.info('[ChatLogic] Using focusFile as context:', focusFile.path);
                 } catch (e) {
-                    console.error('[ChatLogic] Failed to read focusFile:', e);
+                    Logger.error('[ChatLogic] Failed to read focusFile:', e);
                 }
             } else {
                 try {
@@ -37,7 +38,7 @@ export class ChatLogic {
                     
                     if (searchDecision && !searchDecision.includes('NO_SEARCH')) {
                         const cleanQuery = searchDecision.replace(/["']/g, '').trim();
-                        console.log('[ChatLogic] Smart RAG triggering search for:', cleanQuery);
+                        Logger.info('[ChatLogic] Smart RAG triggering search for:', cleanQuery);
                         const queryEmbedding = await this.plugin.embeddingPipeline.embed(cleanQuery);
                         // Top 3 similar chunks
                         const similar = await this.plugin.vectorStore.querySimilar(queryEmbedding, 3);
@@ -45,10 +46,10 @@ export class ChatLogic {
                             retrievedContext = similar.map(c => `File: ${c.filePath}\nContent:\n${c.text}`).join('\n\n---\n\n');
                         }
                     } else {
-                        console.log('[ChatLogic] Smart RAG determined no search needed.');
+                        Logger.info('[ChatLogic] Smart RAG determined no search needed.');
                     }
                 } catch (e) {
-                    console.error('[ChatLogic] Failed to retrieve RAG context:', e);
+                    Logger.error('[ChatLogic] Failed to retrieve RAG context:', e);
                     // Non-fatal, continue without RAG
                 }
             }
@@ -62,7 +63,7 @@ export class ChatLogic {
                     userProfile = await this.plugin.app.vault.read(file);
                 }
             } catch (e) {
-                console.error('[ChatLogic] Failed to read user profile:', e);
+                Logger.error('[ChatLogic] Failed to read user profile:', e);
             }
 
             // 3. Construct System Prompt
@@ -98,6 +99,10 @@ Disclaimer: If the user expresses intent to harm themselves or others, drop the 
                 systemPrompt += `\n\nTo help you answer the user's latest query, here are some highly relevant notes retrieved from their vault:\n=== RETRIEVED CONTEXT ===\n${retrievedContext}\n====================\nIncorporate this information into your answer if it is relevant to their question.`;
             }
 
+            if (this.plugin.activityLog && this.plugin.activityLog.length > 0) {
+                systemPrompt += `\n\nFor your situational awareness, here is the chronological log of recent file activity during the user's current session:\n=== RECENT VAULT ACTIVITY ===\n${this.plugin.activityLog.join('\n')}\n====================\nUse this context if the user asks questions like "were any new files added" or "what did I just modify".`;
+            }
+
             // 4. Construct final messages payload
             const messages: ChatMessage[] = [
                 { role: 'system', content: systemPrompt },
@@ -110,7 +115,7 @@ Disclaimer: If the user expresses intent to harm themselves or others, drop the 
 
             return resultText;
         } catch (error) {
-            console.error('[ChatLogic] Generation error:', error);
+            Logger.error('[ChatLogic] Generation error:', error);
             throw error;
         }
     }

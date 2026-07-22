@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { RelationEdge } from './relationStore';
 import LumosPlugin from './main';
 
@@ -49,7 +50,7 @@ CRITICAL RULES:
         try {
             jsonStr = await this.plugin.llmService.callLLM(messages, false, true);
         } catch (e) {
-            console.error('LLM generation failed in relations:', e);
+            Logger.error('LLM generation failed in relations:', e);
             return { edges: [], profileInsights: null };
         }
 
@@ -76,7 +77,7 @@ CRITICAL RULES:
 
             return { edges, profileInsights };
         } catch (e) {
-            console.error('Failed to parse JSON from LLM:', jsonStr);
+            Logger.error('Failed to parse JSON from LLM:', jsonStr);
             return { edges: [], profileInsights: null };
         }
     }

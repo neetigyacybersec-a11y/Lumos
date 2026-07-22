@@ -29,8 +29,8 @@ function openDB(): Promise<IDBDatabase> {
 
 export class VectorStore {
     private plugin: Plugin;
-    private vectors: VectorChunk[] = [];
-    private indexedFiles: Set<string> = new Set();
+    public vectors: VectorChunk[] = [];
+    public indexedFiles: Set<string> = new Set();
     private db: IDBDatabase | null = null;
 
     constructor(plugin: Plugin) {

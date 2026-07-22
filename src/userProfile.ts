@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { App, TFile, requestUrl, Notice } from 'obsidian';
 import RelationPlugin from './main';
 
@@ -69,7 +70,7 @@ If NO, output strictly the word "NO" (without quotes).`;
                 await this.flush(); // Force immediate update
             }
         } catch (e) {
-            console.error('[UserProfile] Failed to analyze chat message:', e);
+            Logger.error('[UserProfile] Failed to analyze chat message:', e);
         }
     }
 
@@ -98,7 +99,7 @@ If NO, output strictly the word "NO" (without quotes).`;
         try {
             await this.updateProfileWithLLM(textToProcess, insightsToProcess);
         } catch (e) {
-            console.error('[UserProfile] Failed to update profile:', e);
+            Logger.error('[UserProfile] Failed to update profile:', e);
             new Notice('[LLM Relations] Failed to generate User Profile. API Error. Check console for details.', 5000);
             
             // Restore buffer on failure so we don't lose the data

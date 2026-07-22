@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { TFile, Notice } from 'obsidian';
 import LumosPlugin from './main';
 import { RELATION_VIEW_TYPE, RelationSidebarView } from './sidebarView';
@@ -86,7 +87,7 @@ export class BackgroundIndexer {
                     try {
                         cleanText = await this.plugin.parser.parsePdf(file);
                     } catch (e) {
-                        console.error(`Failed to parse PDF ${file.path}`, e);
+                        Logger.error(`Failed to parse PDF ${file.path}`, e);
                         shouldSkip = true;
                     }
                 } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
@@ -99,7 +100,7 @@ export class BackgroundIndexer {
                             shouldSkip = true;
                         }
                     } catch (e) {
-                        console.error(`Failed OCR on Image ${file.path}`, e);
+                        Logger.error(`Failed OCR on Image ${file.path}`, e);
                         shouldSkip = true;
                     }
                 }
@@ -110,7 +111,7 @@ export class BackgroundIndexer {
                 } else {
                     const contentHash = hashString(cleanText);
                     if (this.plugin.vectorStore.getFileHash(file.path) === contentHash) {
-                        console.log(`[Lumos] Skipping ${file.path} as content hash matches.`);
+                        Logger.info(`[Lumos] Skipping ${file.path} as content hash matches.`);
                         this.processedFiles++;
                         this.progressUi.update(this.processedFiles, this.totalFiles, file.name);
                         continue;
@@ -168,21 +169,21 @@ export class BackgroundIndexer {
                 retryCount = 0; // Success, reset retries
             } catch (e) {
                 if (e instanceof TerminalApiError) {
-                    console.error(`[Lumos] Terminal API Error. Circuit breaking:`, e);
+                    Logger.error(`[Lumos] Terminal API Error. Circuit breaking:`, e);
                     this.queue = this.queue.slice(cursor); // Preserve remaining queue
                     this.isProcessing = false;
                     this.progressUi.hide();
                     new Notice(`🚨 LLM Indexing Halted: ${e.message}`, 15000);
                     return; // Halt completely
                 } else if (e instanceof TransientApiError && retryCount < 3) {
-                    console.warn(`[Lumos] Transient API Error. Retrying (Attempt ${retryCount + 1})...`, e);
+                    Logger.warn(`[Lumos] Transient API Error. Retrying (Attempt ${retryCount + 1})...`, e);
                     retryCount++;
                     const delay = 2000 * Math.pow(2, retryCount);
                     new Notice(`Network error, retrying in ${delay/1000}s...`, delay);
                     await new Promise(resolve => setTimeout(resolve, delay));
                     continue; // Skip the rest, loop will pull the same file again (cursor not incremented)
                 } else {
-                    console.error(`[RelationPlugin] Failed to index ${file.path}`, e);
+                    Logger.error(`[RelationPlugin] Failed to index ${file.path}`, e);
                     // Mark as processed with 0 chunks to prevent infinite poison-pill retry loops on startup
                     await this.plugin.vectorStore.upsert(file.path, []);
                     retryCount = 0;
@@ -304,17 +305,17 @@ export class BackgroundIndexer {
                 retryCount = 0;
             } catch (e) {
                 if (e instanceof TerminalApiError) {
-                    console.error(`[Lumos] Terminal API Error during Calendar Indexing. Circuit breaking:`, e);
+                    Logger.error(`[Lumos] Terminal API Error during Calendar Indexing. Circuit breaking:`, e);
                     new Notice(`🚨 Calendar Indexing Halted: ${e.message}`, 15000);
                     return; // Halt completely
                 } else if (e instanceof TransientApiError && retryCount < 3) {
-                    console.warn(`[Lumos] Transient API Error. Retrying (Attempt ${retryCount + 1})...`, e);
+                    Logger.warn(`[Lumos] Transient API Error. Retrying (Attempt ${retryCount + 1})...`, e);
                     retryCount++;
                     const delay = 2000 * Math.pow(2, retryCount);
                     await new Promise(resolve => setTimeout(resolve, delay));
                     continue; // Skip the rest, loop will pull the event again
                 } else {
-                    console.error(`[RelationPlugin] Failed to index calendar event ${event.summary}`, e);
+                    Logger.error(`[RelationPlugin] Failed to index calendar event ${event.summary}`, e);
                     retryCount = 0;
                     // Removed cursor++ here to prevent double-increment
                 }

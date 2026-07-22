@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, PluginSettingTab, Setting, TFile, Notice } from 'obsidian';
 import LumosPlugin from './main';
 import { loginGoogle } from './googleAuth';
 
@@ -179,6 +179,23 @@ export class RelationSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.ignoredFolders = value;
 					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Open Debug Log')
+			.setDesc('View the background activity logs (lumos-debug.log) to help troubleshoot issues.')
+			.addButton(btn => btn
+				.setButtonText('Open Logs')
+				.onClick(async () => {
+					const manifestDir = this.plugin.manifest?.dir || '';
+					const logPath = `${manifestDir}/lumos-debug.log`;
+					const file = this.app.vault.getAbstractFileByPath(logPath);
+					if (file && file instanceof TFile) {
+						const leaf = this.app.workspace.getLeaf(true);
+						await leaf.openFile(file);
+					} else {
+						new Notice("No debug logs found yet.");
+					}
 				}));
 
 		containerEl.createEl('h3', {text: 'Google Calendar Integration', cls: 'setting-item-heading'});

@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { ItemView, WorkspaceLeaf, requestUrl, MarkdownRenderer, TFile, MarkdownView } from 'obsidian';
 import LumosPlugin from './main';
 
@@ -303,7 +304,7 @@ export class SemanticSearchView extends ItemView {
                 const newResults = await this.plugin.vectorStore.querySimilar(queryVector, 5);
                 await this.renderChatAndGenerate(newResults, container);
             } catch(err) {
-                 console.error(err);
+                 Logger.error(err);
             }
         };
         

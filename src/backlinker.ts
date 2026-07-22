@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { App, TFile } from 'obsidian';
 import { PluginSettings } from './types';
 import { RelationEdge } from './relationStore';
@@ -84,7 +85,7 @@ export class BacklinkManager {
                 frontmatter.ai_relations = [...new Set(frontmatter.ai_relations)];
             });
         } catch (e) {
-            console.error(`[Lumos] Failed to inject backlinks into ${sourceFile.path}`, e);
+            Logger.error(`[Lumos] Failed to inject backlinks into ${sourceFile.path}`, e);
         }
     }
 }

@@ -1,3 +1,4 @@
+import { Logger } from './logger';
 import { Plugin } from 'obsidian';
 
 export interface RelationEdge {
@@ -74,7 +75,7 @@ export class RelationStore {
             }
             await this.plugin.app.vault.adapter.rename(tempPath, finalPath);
         } catch (e) {
-            console.error('Failed to save relations', e);
+            Logger.error('Failed to save relations', e);
         } finally {
             this.isSaving = false;
             if (this.savePending) {
