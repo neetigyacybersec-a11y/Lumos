@@ -6,6 +6,9 @@ import { EmbeddingPipeline } from '../src/embeddings';
 import { RelationExtractor } from '../src/relations';
 import { TransientApiError } from '../src/llmService';
 import { DEFAULT_SETTINGS, PluginSettings } from '../src/types';
+import { LexicalIndex } from '../src/search/lexicalIndex';
+import { HybridRetriever } from '../src/search/hybridRetriever';
+import { Reranker } from '../src/search/reranker';
 
 // ---------------------------------------------------------------------------
 // Fake IndexedDB: persists rows in a module-level Map so a "restart" (new
@@ -186,6 +189,20 @@ async function makeWorld(
 	const vectorStore = new VectorStore(plugin);
 	await vectorStore.load();
 	plugin.vectorStore = vectorStore;
+
+	const lexical = new LexicalIndex();
+	vectorStore.onMutation = (op, filePath, oldPath, chunks) => {
+		if (op === 'upsert' && filePath && chunks) {
+			lexical.upsert(filePath, chunks.filter((c) => c.embedding.length > 0));
+		} else if (op === 'delete' && filePath) {
+			lexical.delete(filePath);
+		} else if (op === 'rename' && filePath && oldPath) {
+			lexical.renameFile(oldPath, filePath);
+		} else if (op === 'clear') {
+			lexical.clear();
+		}
+	};
+	plugin.hybridRetriever = new HybridRetriever(plugin, lexical, new Reranker(null));
 
 	const indexer = new BackgroundIndexer(plugin);
 	(indexer as any).progressUi = { show() {}, update() {}, hide() {} };

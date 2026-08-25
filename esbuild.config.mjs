@@ -11,7 +11,7 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === 'production');
 
-const context = await esbuild.context({
+const mainContext = await esbuild.context({
 	banner: {
 		js: banner,
 	},
@@ -20,6 +20,9 @@ const context = await esbuild.context({
 	external: [
 		'obsidian',
 		'electron',
+		// Never used by the plugin runtime (eval-harness-only code path); must
+		// not be inlined here — it ships inside reranker.worker.js instead.
+		'@huggingface/transformers',
 		'@codemirror/autocomplete',
 		'@codemirror/collab',
 		'@codemirror/commands',
@@ -40,9 +43,25 @@ const context = await esbuild.context({
 	outfile: 'main.js',
 });
 
+// Separate bundle so the transformers.js runtime + ONNX model loading stay
+// entirely off the main plugin bundle and the UI thread.
+const workerContext = await esbuild.context({
+	entryPoints: ['src/search/reranker.worker.ts'],
+	outfile: 'reranker.worker.js',
+	bundle: true,
+	format: 'iife',
+	target: 'es2020',
+	logLevel: "info",
+	sourcemap: false,
+	treeShaking: true,
+	legalComments: 'none',
+});
+
 if (prod) {
-	await context.rebuild();
+	await mainContext.rebuild();
+	await workerContext.rebuild();
 	process.exit(0);
 } else {
-	await context.watch();
+	await mainContext.watch();
+	await workerContext.watch();
 }

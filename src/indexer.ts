@@ -146,7 +146,18 @@ export class BackgroundIndexer {
 
                     // Extract Relations (only if it has similar notes to compare to)
                     if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
-                        const similar = await this.plugin.vectorStore.querySimilar(firstEmbedding, 3, file.path);
+                        // Hybrid candidate selection: dense anchor embedding plus a
+                        // BM25 query over the new/changed text, so candidates that
+                        // share exact terminology are not paraphrased away.
+                        const lexicalQuery = (changedChunkTexts.length > 0
+                            ? changedChunkTexts.join('\n\n')
+                            : cleanText).slice(0, 4000);
+                        const similar = await this.plugin.hybridRetriever.retrieve({
+                            queryVector: firstEmbedding,
+                            lexicalQuery,
+                            topK: 3,
+                            excludeFilePath: file.path,
+                        });
                         if (similar.length > 0) {
                             const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
 
@@ -311,7 +322,12 @@ export class BackgroundIndexer {
                 
                 // Extract Relations
                 if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
-                    const similar = await this.plugin.vectorStore.querySimilar(firstEmbedding, 3, virtualPath);
+                    const similar = await this.plugin.hybridRetriever.retrieve({
+                        queryVector: firstEmbedding,
+                        lexicalQuery: cleanText.slice(0, 4000),
+                        topK: 3,
+                        excludeFilePath: virtualPath,
+                    });
                     if (similar.length > 0) {
                         const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
                         const prompt = this.plugin.relationExtractor.constructPrompt(virtualPath, cleanText, candidates);

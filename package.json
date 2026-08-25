@@ -25,6 +25,7 @@
   "dependencies": {
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.6",
+    "@huggingface/transformers": "^4.2.0",
     "pdf-parse": "^2.4.5",
     "tesseract.js": "^7.0.0"
   }

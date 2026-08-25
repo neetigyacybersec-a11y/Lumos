@@ -33,6 +33,16 @@ export class VectorStore {
     public vectors: VectorChunk[] = [];
     public indexedFiles: Set<string> = new Set();
     private db: IDBDatabase | null = null;
+    /**
+     * Notified after every committed mutation so derived indexes (lexical
+     * BM25) can mirror the corpus without polling.
+     */
+    public onMutation?: (
+        op: 'upsert' | 'delete' | 'rename' | 'clear',
+        filePath?: string,
+        oldPath?: string,
+        chunks?: VectorChunk[]
+    ) => void;
 
     constructor(plugin: Plugin) {
         this.plugin = plugin;
@@ -79,12 +89,12 @@ export class VectorStore {
 
         // Update IndexedDB
         if (this.db) {
-            return new Promise<void>((resolve, reject) => {
+            await new Promise<void>((resolve, reject) => {
                 const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
                 const store = transaction.objectStore(STORE_NAME);
                 const index = store.index('filePath');
                 const keyReq = index.getAllKeys(filePath);
-                
+
                 keyReq.onsuccess = () => {
                     const keys = keyReq.result;
                     for (const key of keys) {
@@ -94,11 +104,13 @@ export class VectorStore {
                         store.put(chunk);
                     }
                 };
-                
+
                 transaction.oncomplete = () => resolve();
                 transaction.onerror = () => reject(transaction.error);
             });
         }
+
+        this.onMutation?.('upsert', filePath, undefined, rows);
     }
 
     async delete(filePath: string) {
@@ -108,23 +120,25 @@ export class VectorStore {
 
         // Update IndexedDB
         if (this.db) {
-            return new Promise<void>((resolve, reject) => {
+            await new Promise<void>((resolve, reject) => {
                 const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
                 const store = transaction.objectStore(STORE_NAME);
                 const index = store.index('filePath');
                 const keyReq = index.getAllKeys(filePath);
-                
+
                 keyReq.onsuccess = () => {
                     const keys = keyReq.result;
                     for (const key of keys) {
                         store.delete(key);
                     }
                 };
-                
+
                 transaction.oncomplete = () => resolve();
                 transaction.onerror = () => reject(transaction.error);
             });
         }
+
+        this.onMutation?.('delete', filePath);
     }
 
     async renameFile(oldPath: string, newPath: string) {
@@ -145,12 +159,12 @@ export class VectorStore {
 
         // Update IndexedDB
         if (this.db && changed) {
-            return new Promise<void>((resolve, reject) => {
+            await new Promise<void>((resolve, reject) => {
                 const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
                 const store = transaction.objectStore(STORE_NAME);
                 const index = store.index('filePath');
                 const req = index.getAll(oldPath);
-                
+
                 req.onsuccess = () => {
                     const records = req.result as VectorChunk[];
                     for (const record of records) {
@@ -160,11 +174,13 @@ export class VectorStore {
                         store.put(record); // Insert new record
                     }
                 };
-                
+
                 transaction.oncomplete = () => resolve();
                 transaction.onerror = () => reject(transaction.error);
             });
         }
+
+        if (changed) this.onMutation?.('rename', newPath, oldPath);
     }
 
     async clear() {
@@ -172,15 +188,17 @@ export class VectorStore {
         this.indexedFiles.clear();
 
         if (this.db) {
-            return new Promise<void>((resolve, reject) => {
+            await new Promise<void>((resolve, reject) => {
                 const transaction = this.db!.transaction(STORE_NAME, 'readwrite');
                 const store = transaction.objectStore(STORE_NAME);
                 store.clear();
-                
+
                 transaction.oncomplete = () => resolve();
                 transaction.onerror = () => reject(transaction.error);
             });
         }
+
+        this.onMutation?.('clear');
     }
 
     hasFile(filePath: string): boolean {

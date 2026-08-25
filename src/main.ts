@@ -20,6 +20,9 @@ import { SEARCH_VIEW_TYPE, SemanticSearchView } from './searchView';
 import { UserProfileManager } from './userProfile';
 import { ChatView, CHAT_VIEW_TYPE } from './chatView';
 import { LLMService } from './llmService';
+import { LexicalIndex } from './search/lexicalIndex';
+import { HybridRetriever } from './search/hybridRetriever';
+import { Reranker, createBlobWorkerBackend } from './search/reranker';
 
 export default class LumosPlugin extends Plugin {
 	settings: PluginSettings;
@@ -36,6 +39,8 @@ export default class LumosPlugin extends Plugin {
 	localOcr: LocalOcr;
 	userProfileManager: UserProfileManager;
 	llmService: LLMService;
+	lexicalIndex: LexicalIndex;
+	hybridRetriever: HybridRetriever;
 
 	public activityLog: string[] = [];
 
@@ -321,6 +326,40 @@ export default class LumosPlugin extends Plugin {
 		this.llmService = new LLMService(this);
 		this.vectorStore = new VectorStore(this);
 		await this.vectorStore.load();
+
+		// Hybrid retrieval: BM25 index mirrors the vector corpus, RRF fusion,
+		// optional local cross-encoder rerank (runs off the UI thread).
+		this.lexicalIndex = new LexicalIndex();
+		this.lexicalIndex.rebuild(
+			this.vectorStore.vectors.filter((v) => v.embedding.length > 0)
+		);
+		this.vectorStore.onMutation = (op, filePath, oldPath, chunks) => {
+			if (op === 'upsert' && filePath && chunks) {
+				this.lexicalIndex.upsert(filePath, chunks.filter((c) => c.embedding.length > 0));
+			} else if (op === 'delete' && filePath) {
+				this.lexicalIndex.delete(filePath);
+			} else if (op === 'rename' && filePath && oldPath) {
+				this.lexicalIndex.renameFile(oldPath, filePath);
+			} else if (op === 'clear') {
+				this.lexicalIndex.clear();
+			}
+		};
+		const reranker = new Reranker(async () => {
+			try {
+				const dir = this.manifest?.dir || '';
+				// Worker construction is cross-origin-blocked for app:// resource
+				// URLs; spawn from a same-origin blob of the script text instead.
+				const script = await this.app.vault.adapter.read(`${dir}/reranker.worker.js`);
+				return createBlobWorkerBackend(script);
+			} catch (e) {
+				Logger.warn('[Lumos] Reranker worker unavailable:', e);
+				return null;
+			}
+		}, false, () => {
+			new Notice('Lumos: local reranker unavailable this session — using rank fusion only.', 8000);
+		});
+		this.hybridRetriever = new HybridRetriever(this, this.lexicalIndex, reranker);
+
 		this.embeddingPipeline = new EmbeddingPipeline(this.settings);
 		this.relationStore = new RelationStore(this);
 		await this.relationStore.load();

@@ -53,13 +53,12 @@ export class SemanticSearchView extends ItemView {
         
         this.chatHistory = [];
         this.resultsContainer.empty();
-        this.resultsContainer.createEl('p', { text: 'Embedding query...' });
+            this.resultsContainer.createEl('p', { text: 'Searching...' });
         
         try {
-            const queryVector = await this.plugin.embeddingPipeline.embed(query);
             this.resultsContainer.empty();
-            
-            const results = await this.plugin.vectorStore.querySimilar(queryVector, 10);
+
+            const results = await this.plugin.hybridRetriever.retrieve({ query, topK: 10 });
             
             if (results.length === 0) {
                 this.resultsContainer.createEl('p', { text: 'No results found.' });
@@ -300,8 +299,7 @@ export class SemanticSearchView extends ItemView {
             this.chatHistory.push({ role: 'user', content: q });
             
             try {
-                const queryVector = await this.plugin.embeddingPipeline.embed(q);
-                const newResults = await this.plugin.vectorStore.querySimilar(queryVector, 5);
+                const newResults = await this.plugin.hybridRetriever.retrieve({ query: q, topK: 5 });
                 await this.renderChatAndGenerate(newResults, container);
             } catch(err) {
                  Logger.error(err);

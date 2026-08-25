@@ -18,6 +18,9 @@ export interface PluginSettings {
 	googleClientSecret: string;
 	googleRefreshToken: string;
 	googleSyncEnabled: boolean;
+	enableHybridSearch: boolean;
+	rerankerModel: 'off' | 'tiny' | 'mini';
+	rerankCandidates: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -37,6 +40,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	googleClientSecret: '',
 	googleRefreshToken: '',
 	googleSyncEnabled: false,
+	enableHybridSearch: true,
+	rerankerModel: 'off',
+	rerankCandidates: 20,
 }
 
 export interface QueuedFile {

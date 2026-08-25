@@ -168,6 +168,45 @@ export class RelationSettingTab extends PluginSettingTab {
 					}));
 		}
 
+		containerEl.createEl('h3', {text: 'Hybrid Search & Reranking', cls: 'setting-item-heading'});
+
+		new Setting(containerEl)
+			.setName('Enable Hybrid Search (BM25 + Vectors)')
+			.setDesc('Combine keyword (BM25) and semantic vector search with rank fusion. Finds exact terms, file names, and identifiers that pure semantic search misses. Runs fully offline.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.enableHybridSearch)
+				.onChange(async (value) => {
+					this.plugin.settings.enableHybridSearch = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Local Reranker')
+			.setDesc('Re-rank the top search candidates with a local cross-encoder model for higher precision. The model (~4-23MB) downloads once from Hugging Face and then runs fully offline. "Off" keeps plain rank fusion.')
+			.addDropdown(drop => drop
+				.addOption('off', 'Off (rank fusion only)')
+				.addOption('tiny', 'Fast (~4MB, TinyBERT)')
+				.addOption('mini', 'Accurate (~23MB, MiniLM)')
+				.setValue(this.plugin.settings.rerankerModel)
+				.onChange(async (value: 'off' | 'tiny' | 'mini') => {
+					this.plugin.settings.rerankerModel = value;
+					await this.plugin.saveSettings();
+				}));
+
+		if (this.plugin.settings.rerankerModel !== 'off') {
+			new Setting(containerEl)
+				.setName('Rerank Depth')
+				.setDesc('How many fused candidates to re-score per query. Higher = better precision, slower ranking.')
+				.addSlider(slider => slider
+					.setLimits(5, 50, 5)
+					.setValue(this.plugin.settings.rerankCandidates)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.rerankCandidates = value;
+						await this.plugin.saveSettings();
+					}));
+		}
+
 		containerEl.createEl('h3', {text: 'Privacy & Exclusions', cls: 'setting-item-heading'});
 
 		new Setting(containerEl)
