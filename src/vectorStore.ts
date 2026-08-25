@@ -6,6 +6,7 @@ export interface VectorChunk {
     text: string;
     embedding: number[];
     contentHash?: string;
+    chunkHash?: string;
 }
 
 const DB_NAME = 'LumosDB';
@@ -62,11 +63,18 @@ export class VectorStore {
     }
 
     async upsert(filePath: string, chunks: VectorChunk[]) {
+        // Persist a marker row for empty/failed files so they stay "indexed"
+        // across restarts; load() rebuilds indexedFiles from rows only (#startup-reindex).
+        const rows = chunks.length > 0 ? chunks : [{
+            id: `${filePath}#marker`,
+            filePath,
+            text: '',
+            embedding: [],
+        }];
+
         // Update memory
         this.vectors = this.vectors.filter(v => v.filePath !== filePath);
-        if (chunks.length > 0) {
-            this.vectors.push(...chunks);
-        }
+        this.vectors.push(...rows);
         this.indexedFiles.add(filePath);
 
         // Update IndexedDB
@@ -82,7 +90,7 @@ export class VectorStore {
                     for (const key of keys) {
                         store.delete(key);
                     }
-                    for (const chunk of chunks) {
+                    for (const chunk of rows) {
                         store.put(chunk);
                     }
                 };
@@ -179,6 +187,10 @@ export class VectorStore {
         return this.indexedFiles.has(filePath);
     }
 
+    getChunks(filePath: string): VectorChunk[] {
+        return this.vectors.filter(v => v.filePath === filePath && v.embedding.length > 0);
+    }
+
     getFileCount(): number {
         return this.indexedFiles.size;
     }
@@ -193,13 +205,14 @@ export class VectorStore {
 
         for (let i = 0; i < this.vectors.length; i++) {
             const v = this.vectors[i];
-            
+
             // Yield to main thread every 500 items to prevent UI freezing
             if (i > 0 && i % 500 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
 
             if (v.filePath === excludeFilePath) continue;
+            if (v.embedding.length === 0) continue; // skip empty/failed markers
             
             const similarity = cosineSimilarity(embedding, v.embedding);
             const existing = fileMaxSim.get(v.filePath);

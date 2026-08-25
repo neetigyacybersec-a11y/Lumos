@@ -27,6 +27,30 @@ export class Setting {
     addText(cb: any) { cb(this); return this; }
     setPlaceholder() { return this; }
 }
+export class Notice {
+    constructor(public message?: any, public timeout?: number) {}
+    noticeEl: any;
+    hide() {}
+}
+export class ItemView {
+    leaf: any;
+    constructor(leaf?: any) { this.leaf = leaf; }
+    navigation = false;
+    getViewType() { return ''; }
+    getDisplayText() { return ''; }
+    onOpen() {}
+    onClose() {}
+    containerEl: any = {
+        empty() {}, createDiv: () => ({ createEl: () => ({}), empty() {} }),
+        createEl: () => ({}), addClass() {}, removeClass() {},
+    };
+    contentEl: any = this.containerEl;
+    registerEvent() {}
+    app: any;
+}
+export class WorkspaceLeaf {}
+export class MarkdownView {}
+export function requestUrl(_r: any): Promise<any> { return Promise.resolve({ status: 200, json: {} }); }
 export class TAbstractFile {
     vault: any;
     path: string;

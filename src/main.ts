@@ -113,7 +113,7 @@ export default class LumosPlugin extends Plugin {
 			name: 'Retry Failed/Empty Files',
 			callback: async () => {
 				const allFiles = Array.from(this.vectorStore.indexedFiles);
-				const validFiles = new Set(this.vectorStore.vectors.map(v => v.filePath));
+				const validFiles = new Set(this.vectorStore.vectors.filter(v => v.embedding.length > 0).map(v => v.filePath));
 				const poisonedFiles = allFiles.filter(f => !validFiles.has(f));
 				
 				if (poisonedFiles.length === 0) {

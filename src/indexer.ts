@@ -116,27 +116,49 @@ export class BackgroundIndexer {
                         this.progressUi.update(this.processedFiles, this.totalFiles, file.name);
                         continue;
                     }
-                    
-                    // 2. Embed
+
+                    // Embed only new/changed chunks; reuse stored vectors for
+                    // chunks whose text is unchanged (#incremental-edit).
+                    const previousChunks = this.plugin.vectorStore.getChunks(file.path);
+                    const reusable = new Map<string, number[]>();
+                    for (const prev of previousChunks) {
+                        if (prev.chunkHash && prev.embedding.length > 0) {
+                            reusable.set(prev.chunkHash, prev.embedding);
+                        }
+                    }
+                    const isPartialUpdate = previousChunks.length > 0;
+
                     const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
                     let firstEmbedding: number[] | null = null;
+                    const changedChunkTexts: string[] = [];
                     const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
-                        const embedding = await this.plugin.embeddingPipeline.embed(text);
-                        madeNetworkCall = true;
+                        const chunkHash = hashString(text);
+                        let embedding = reusable.get(chunkHash);
+                        if (!embedding) {
+                            embedding = await this.plugin.embeddingPipeline.embed(text);
+                            madeNetworkCall = true;
+                            changedChunkTexts.push(text);
+                        }
                         if (i === 0) firstEmbedding = embedding;
-                        return { id: `${file.path}#${i}`, filePath: file.path, text, embedding, contentHash };
+                        return { id: `${file.path}#${i}`, filePath: file.path, text, embedding, contentHash, chunkHash };
                     }));
                     await this.plugin.vectorStore.upsert(file.path, vectorChunks);
-                    
-                    // 3. Extract Relations (only if it has similar notes to compare to)
+
+                    // Extract Relations (only if it has similar notes to compare to)
                     if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
                         const similar = await this.plugin.vectorStore.querySimilar(firstEmbedding, 3, file.path);
                         if (similar.length > 0) {
                             const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
-                            const prompt = this.plugin.relationExtractor.constructPrompt(file.path, cleanText, candidates);
+
+                            // On a partial edit, only send the changed excerpts to
+                            // the LLM instead of the whole file (#incremental-edit).
+                            const sourceText = isPartialUpdate
+                                ? changedChunkTexts.join('\n\n')
+                                : cleanText;
+                            const prompt = this.plugin.relationExtractor.constructPrompt(file.path, sourceText, candidates);
                             const { edges, profileInsights } = await this.plugin.relationExtractor.extractRelations(prompt, file.path);
                             madeNetworkCall = true;
-                            
+
                             if (profileInsights) {
                                 await this.plugin.userProfileManager.addInsight(profileInsights);
                             }
@@ -145,19 +167,30 @@ export class BackgroundIndexer {
                             const scoredEdges = edges.map(edge => {
                                 const targetFile = this.plugin.app.vault.getAbstractFileByPath(edge.target);
                                 if (!(targetFile instanceof TFile)) return edge;
-                                
+
                                 const simMatch = similar.find(s => s.filePath === edge.target);
                                 const cosine = simMatch ? simMatch.similarity : 0;
-                                
+
                                 edge.scores = this.plugin.scoringEngine.calculateOverallScore(file, targetFile, cosine, edge.confidence);
                                 return edge;
                             });
 
-                            await this.plugin.relationStore.upsertEdges(file.path, scoredEdges, true);
-                            
+                            // Keep relations discovered by unchanged chunks; the
+                            // LLM only re-derives those touching changed text.
+                            let finalEdges = scoredEdges;
+                            if (isPartialUpdate) {
+                                const existing = this.plugin.relationStore.getEdgesForPath(file.path)
+                                    .filter(e => e.source === file.path);
+                                const superseded = new Set(scoredEdges.map(e => `${e.target}|${e.relationType}`));
+                                const kept = existing.filter(e => !superseded.has(`${e.target}|${e.relationType}`));
+                                finalEdges = [...kept, ...scoredEdges];
+                            }
+
+                            await this.plugin.relationStore.upsertEdges(file.path, finalEdges, true);
+
                             // Process Backlinks
                             if (ext === 'md') {
-                                await this.plugin.backlinkManager.processEdges(file, edges);
+                                await this.plugin.backlinkManager.processEdges(file, finalEdges);
                             }
                         } else {
                             await this.plugin.userProfileManager.addActivity(cleanText);
