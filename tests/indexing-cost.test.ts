@@ -313,6 +313,73 @@ describe('startup re-index cost', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Resilience: hangs, watchdogs, and failure cooldowns
+// ---------------------------------------------------------------------------
+
+describe('indexer resilience', () => {
+	it('REGRESSION: a hung embedding call cannot freeze the whole queue', async () => {
+		const specs = { 'a.md': para('alpha'), 'b.md': para('beta') };
+		const w1 = await makeWorld(specs);
+		w1.setRelationBehavior(async () => '{"relations": [], "profileInsights": null}');
+
+		// b.md's embed hangs forever (backend accepted the socket, never replied)
+		const realEmbed = w1.vectorStore.plugin.embeddingPipeline.embed;
+		(w1.vectorStore.plugin.embeddingPipeline as any).embed = (text: string) =>
+			text.includes('beta') ? new Promise<number[]>(() => {}) : realEmbed.call(w1.vectorStore.plugin.embeddingPipeline, text);
+
+		await drain(w1.indexer); // must complete, not hang
+
+		expect(w1.vectorStore.hasFile('a.md')).toBe(true);
+		// b.md ended up marked failed rather than blocking everyone forever
+		expect(w1.counters.parse).toBeGreaterThanOrEqual(2);
+	});
+
+	it('REGRESSION: a hung parser cannot freeze the whole queue', async () => {
+		const specs = { 'a.md': para('alpha'), 'stuck.md': para('stuck') };
+		const w1 = await makeWorld(specs);
+
+		const realParse = (w1.vectorStore.plugin as any).parser.parse.bind((w1.vectorStore.plugin as any).parser);
+		(w1.vectorStore.plugin.parser as any).parse = (f: TFile) =>
+			f.path === 'stuck.md' ? new Promise<never>(() => {}) : realParse(f);
+
+		await drain(w1.indexer); // watchdog must abandon stuck.md
+
+		expect(w1.vectorStore.hasFile('a.md')).toBe(true);
+	});
+
+	it('REGRESSION: failed files cool down before the watcher can requeue them; duplicates dedupe', async () => {
+		const specs = { 'a.md': para('alpha'), 'flaky.md': para('flaky') };
+		const w1 = await makeWorld(specs);
+		// flaky.md always fails at embed with a plain error -> generic poison path
+		const realEmbed = w1.vectorStore.plugin.embeddingPipeline.embed;
+		(w1.vectorStore.plugin.embeddingPipeline as any).embed = (text: string) => {
+			if (text.includes('flaky')) return Promise.reject(new Error('boom'));
+			return realEmbed.call(w1.vectorStore.plugin.embeddingPipeline, text);
+		};
+		await drain(w1.indexer);
+		const parsesAfterFirstRun = w1.counters.parse;
+
+		// Watcher fires again immediately -> cooldown must reject requeue
+		const flakyFile = w1.files.get('flaky.md')!;
+		expect(w1.indexer.enqueue(flakyFile)).toBe(false);
+		expect(w1.indexer.queue.map((f) => f.path)).not.toContain('flaky.md');
+
+		// Cooldown expiry allows it again
+		w1.indexer.failureCooldownMs = 0;
+		expect(w1.indexer.enqueue(flakyFile)).toBe(true);
+		await drain(w1.indexer);
+		expect(w1.counters.parse).toBeGreaterThan(parsesAfterFirstRun);
+
+		// Dedup: same file twice while queued counts once
+		const a = w1.files.get('a.md')!;
+		w1.indexer.queue.length = 0;
+		expect(w1.indexer.enqueue(a)).toBe(true);
+		expect(w1.indexer.enqueue(a)).toBe(false);
+		expect(w1.indexer.queue.filter((f) => f.path === 'a.md')).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Symptom 2: small edit sends the whole file to the LLM/embedder
 // ---------------------------------------------------------------------------
 

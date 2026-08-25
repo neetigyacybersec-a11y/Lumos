@@ -102,7 +102,8 @@ export default class LumosPlugin extends Plugin {
 				new Notice(`Re-indexing ${file.name}...`);
 				await this.vectorStore.delete(file.path);
 				await this.relationStore.deleteEdges(file.path);
-				this.indexer.queue.push(file);
+				this.indexer.clearFailure(file.path);
+				this.indexer.enqueue(file, true);
 				if (!this.indexer.isProcessing) {
 					this.indexer.totalFiles = this.indexer.queue.length;
 					this.indexer.processedFiles = 0;
@@ -132,7 +133,8 @@ export default class LumosPlugin extends Plugin {
 					if (file instanceof TFile) {
 						await this.vectorStore.delete(filePath);
 						await this.relationStore.deleteEdges(filePath);
-						this.indexer.queue.push(file);
+						this.indexer.clearFailure(filePath);
+						this.indexer.enqueue(file, true);
 						queued++;
 					}
 				}
@@ -357,6 +359,9 @@ export default class LumosPlugin extends Plugin {
 			}
 		}, false, () => {
 			new Notice('Lumos: local reranker unavailable this session — using rank fusion only.', 8000);
+		}, (modelId) => {
+			new Notice('Lumos: downloading local reranker model (one-time)...', 10000);
+			Logger.info(`[Lumos] Downloading reranker model ${modelId}`);
 		});
 		this.hybridRetriever = new HybridRetriever(this, this.lexicalIndex, reranker);
 
@@ -385,13 +390,14 @@ export default class LumosPlugin extends Plugin {
 				await this.vectorStore.delete(file.path);
 				await this.relationStore.deleteEdges(file.path);
 			} else {
-				this.indexer.queue.push(file);
-				if (!this.indexer.isProcessing) {
-					this.indexer.totalFiles = this.indexer.queue.length;
-					this.indexer.processedFiles = 0;
-					this.indexer.processQueue();
-				} else {
-					this.indexer.totalFiles = Math.max(this.indexer.totalFiles + 1, this.indexer.queue.length);
+				if (this.indexer.enqueue(file)) {
+					if (!this.indexer.isProcessing) {
+						this.indexer.totalFiles = this.indexer.queue.length;
+						this.indexer.processedFiles = 0;
+						this.indexer.processQueue();
+					} else {
+						this.indexer.totalFiles = Math.max(this.indexer.totalFiles + 1, this.indexer.queue.length);
+					}
 				}
 			}
 		});

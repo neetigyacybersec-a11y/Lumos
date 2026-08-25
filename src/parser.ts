@@ -14,9 +14,9 @@ export class Parser {
 		const cache = this.app.metadataCache.getFileCache(file);
 		
 		let cleanText = content;
-		
-		// Remove frontmatter
-		if (cache?.frontmatter) {
+
+		// Remove frontmatter (position can be missing while metadataCache builds)
+		if (cache?.frontmatter?.position) {
 			const { position } = cache.frontmatter;
 			cleanText = content.substring(0, position.start.offset) + content.substring(position.end.offset);
 		}

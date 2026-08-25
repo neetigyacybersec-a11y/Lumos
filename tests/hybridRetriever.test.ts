@@ -219,4 +219,22 @@ describe('HybridRetriever', () => {
 		const hybridOff = await off.retriever.retrieve({ query: 'kubernetes autoscaling', topK: 2 });
 		expect(hybridOff[0].filePath).toBe('unrelated.md'); // dense-only keeps the wrong winner
 	});
+
+	it('skipRerank: background indexing path never invokes the reranker', async () => {
+		const w = await makeWorld({ rerankerModel: 'mini', rerankCandidates: 20 });
+		w.vectorStore.onMutation?.('upsert', 'a.md', undefined, [
+			{ id: 'a.md#0', filePath: 'a.md', text: 'alpha content', embedding: [1, 0, 0, 0, 0, 0, 0, 0], contentHash: 'h' },
+		]);
+
+		const results = await w.retriever.retrieve({
+			queryVector: [1, 0, 0, 0, 0, 0, 0, 0],
+			lexicalQuery: 'alpha content',
+			topK: 3,
+			excludeFilePath: 'self.md',
+			skipRerank: true,
+		});
+
+		expect(w.rerankSpy).not.toHaveBeenCalled();
+		expect(results[0].filePath).toBe('a.md');
+	});
 });

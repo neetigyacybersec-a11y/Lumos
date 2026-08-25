@@ -207,6 +207,20 @@ export class RelationSettingTab extends PluginSettingTab {
 					}));
 		}
 
+		new Setting(containerEl)
+			.setName('Request Timeout (seconds)')
+			.setDesc('Hard cap per embedding/LLM network call. Timed-out calls retry with backoff instead of hanging the indexer.')
+			.addText(text => text
+				.setPlaceholder('60')
+				.setValue(String(this.plugin.settings.requestTimeoutSec ?? 60))
+				.onChange(async (value) => {
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num >= 5) {
+						this.plugin.settings.requestTimeoutSec = num;
+						await this.plugin.saveSettings();
+					}
+				}));
+
 		containerEl.createEl('h3', {text: 'Privacy & Exclusions', cls: 'setting-item-heading'});
 
 		new Setting(containerEl)

@@ -1,5 +1,6 @@
 import { PluginSettings } from './types';
 import { requestUrl } from 'obsidian';
+import { withApiTimeout } from './llmService';
 
 export class EmbeddingPipeline {
     settings: PluginSettings;
@@ -32,7 +33,7 @@ export class EmbeddingPipeline {
     async embed(text: string): Promise<number[]> {
         if (this.settings.provider === 'ollama') {
             const url = this.settings.baseUrl.replace(/\/$/, '') + '/api/embeddings';
-            const res = await requestUrl({
+            const res = await withApiTimeout(requestUrl({
                 url,
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -40,16 +41,16 @@ export class EmbeddingPipeline {
                     model: this.settings.embeddingModelName || (this.settings.provider === 'ollama' ? 'nomic-embed-text' : 'openai/text-embedding-3-small'),
                     prompt: text
                 })
-            });
+            }), this.settings.requestTimeoutSec, 'Embedding request');
             if (res.status !== 200) throw new Error('Ollama embedding failed');
             return res.json.embedding;
         } else {
             // OpenRouter OpenAI-compatible
             const url = this.settings.baseUrl.replace(/\/$/, '') + '/embeddings';
-            const res = await requestUrl({
+            const res = await withApiTimeout(requestUrl({
                 url,
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${this.settings.apiKey}`
                 },
@@ -57,7 +58,7 @@ export class EmbeddingPipeline {
                     model: this.settings.embeddingModelName || 'openai/text-embedding-3-small',
                     input: text
                 })
-            });
+            }), this.settings.requestTimeoutSec, 'Embedding request');
             if (res.status !== 200) throw new Error('OpenRouter embedding failed');
             return res.json.data[0].embedding;
         }

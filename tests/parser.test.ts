@@ -47,4 +47,28 @@ This is a [[test link]] with some **bold** text and #tag3.
 		expect(parsed.tags).toContain('#tag2');
 		expect(parsed.tags).toContain('#tag3');
 	});
+
+	it('REGRESSION: survives frontmatter cached without a position (metadataCache not ready)', async () => {
+		const markdown = `---
+title: Scraped Page
+---
+Body text that must still be indexed.
+`;
+		const mockApp: any = {
+			vault: { read: async () => markdown },
+			metadataCache: {
+				getFileCache: () => ({
+					frontmatter: { title: 'Scraped Page' }, // no position yet
+					links: [],
+					tags: [],
+				}),
+			},
+		};
+
+		const parser = new Parser(mockApp);
+		const parsed = await parser.parse({} as TFile);
+
+		expect(typeof parsed.cleanText).toBe('string');
+		expect(parsed.cleanText).toContain('Body text');
+	});
 });

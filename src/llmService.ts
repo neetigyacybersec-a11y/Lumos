@@ -21,6 +21,24 @@ export class TransientApiError extends Error {
     }
 }
 
+/**
+ * Remote calls must never hang the caller: requestUrl/fetch have no default
+ * timeout, so a stalled connection froze whole indexing runs. Races the
+ * promise against a timer and surfaces timeouts as TransientApiError so the
+ * existing retry/circuit-break logic engages uniformly.
+ */
+export function withApiTimeout<T>(promise: Promise<T>, timeoutSec: number, label: string): Promise<T> {
+    const seconds = Math.max(1, Math.floor(timeoutSec || 60));
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+            () => reject(new TransientApiError(`${label} timed out after ${seconds}s`)),
+            seconds * 1000
+        );
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export class LLMService {
     plugin: LumosPlugin;
 
@@ -41,13 +59,13 @@ export class LLMService {
                 body.format = 'json';
             }
             try {
-                const res = await requestUrl({
+                const res = await withApiTimeout(requestUrl({
                     url,
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
                     throw: false
-                });
+                }), this.plugin.settings.requestTimeoutSec, 'Ollama request');
                 
                 if (res.status !== 200) {
                     if (res.status === 404 || res.status === 400) throw new TerminalApiError(`Ollama Error (${res.status}): Model not found or bad request.`);
@@ -68,16 +86,16 @@ export class LLMService {
                 body.response_format = { type: "json_object" };
             }
             try {
-                const res = await requestUrl({
+                const res = await withApiTimeout(requestUrl({
                     url,
                     method: 'POST',
-                    headers: { 
+                    headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${this.plugin.settings.apiKey}`
                     },
                     body: JSON.stringify(body),
                     throw: false
-                });
+                }), this.plugin.settings.requestTimeoutSec, 'LLM request');
                 
                 if (res.status !== 200) {
                     if (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 404 || res.status === 400) {

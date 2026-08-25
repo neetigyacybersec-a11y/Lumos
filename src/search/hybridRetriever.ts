@@ -45,6 +45,8 @@ export interface RetrieveOptions {
     topK: number;
     candidateK?: number;
     excludeFilePath?: string;
+    /** Background indexing passes true: reranking is a search-time feature. */
+    skipRerank?: boolean;
 }
 
 /**
@@ -74,7 +76,7 @@ export class HybridRetriever {
         if (candidates.length === 0) return [];
 
         // Cascade: rerank the fused top-N when a model is enabled and available.
-        if (this.plugin.settings.rerankerModel !== 'off') {
+        if (!opts.skipRerank && this.plugin.settings.rerankerModel !== 'off') {
             const depth = Math.min(this.plugin.settings.rerankCandidates || 20, candidates.length);
             const toRerank = candidates.slice(0, depth);
             const scores = await this.reranker.rerank(

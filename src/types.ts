@@ -21,6 +21,7 @@ export interface PluginSettings {
 	enableHybridSearch: boolean;
 	rerankerModel: 'off' | 'tiny' | 'mini';
 	rerankCandidates: number;
+	requestTimeoutSec: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -43,6 +44,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	enableHybridSearch: true,
 	rerankerModel: 'off',
 	rerankCandidates: 20,
+	requestTimeoutSec: 60,
 }
 
 export interface QueuedFile {

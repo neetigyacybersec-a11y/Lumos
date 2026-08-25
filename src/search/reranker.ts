@@ -25,7 +25,8 @@ export class Reranker {
     constructor(
         private createBackend?: (() => RerankBackend | null | Promise<RerankBackend | null>) | null,
         private allowInline: boolean = false,
-        private onUnavailable?: () => void
+        private onUnavailable?: () => void,
+        private onModelLoad?: (modelId: string) => void
     ) {}
 
     async rerank(
@@ -50,6 +51,9 @@ export class Reranker {
             }
             const modelId = RERANKER_MODEL_IDS[modelKey];
             if (this.loadedKey !== modelId) {
+                // First load downloads weights (~4-23MB); surface it so a slow
+                // download never reads as a silent freeze.
+                this.onModelLoad?.(modelId);
                 await this.backend.load(modelId);
                 this.loadedKey = modelId;
             }
@@ -105,13 +109,14 @@ class WorkerBackend implements RerankBackend {
     }
 
     async load(modelId: string): Promise<void> {
-        // Long timeout: first load downloads model weights (~4-23MB).
+        // First load downloads model weights (~4-23MB); 60s cap so a stalled
+        // download degrades to fusion ranking instead of hanging callers.
         const ready = new Promise<void>((resolve, reject) => {
             this.readyResolve = resolve;
             this.readyReject = reject;
         });
-        const timer = setTimeout(() => this.readyReject?.(new Error('model load timed out')), 180000);
-        this.post({ type: 'load', modelId }, timer);
+        const timer = setTimeout(() => this.readyReject?.(new Error('model load timed out')), 60000);
+        this.post({ type: 'load', modelId });
         await ready;
     }
 
@@ -123,7 +128,7 @@ class WorkerBackend implements RerankBackend {
         this.worker.terminate();
     }
 
-    private post(payload: any, extraTimer?: ReturnType<typeof setTimeout>) {
+    private post(payload: any) {
         const id = this.nextId++;
         this.worker.postMessage({ id, ...payload });
         return id;
