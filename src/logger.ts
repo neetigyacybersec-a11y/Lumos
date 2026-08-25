@@ -9,7 +9,6 @@ export class Logger {
 
     static init(sink: LogSink) {
         this.plugin = sink;
-        this.plugin = plugin;
     }
 
     static async writeLog(level: string, message: string, data?: any) {
