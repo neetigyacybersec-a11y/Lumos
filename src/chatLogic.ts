@@ -4,9 +4,6 @@ import LumosPlugin from './main';
 import { ChatMessage } from './llmService';
 
 export class ChatLogic {
-    // We maintain a sliding window of the last 10 messages for context
-    private chatHistory: { role: string, content: string }[] = [];
-    private maxHistory = 10; 
     private isProcessing = false;
     plugin: LumosPlugin;
 
@@ -39,9 +36,8 @@ export class ChatLogic {
                     if (searchDecision && !searchDecision.includes('NO_SEARCH')) {
                         const cleanQuery = searchDecision.replace(/["']/g, '').trim();
                         Logger.info('[ChatLogic] Smart RAG triggering search for:', cleanQuery);
-                        const queryEmbedding = await this.plugin.embeddingPipeline.embed(cleanQuery);
-                        // Top 3 similar chunks
-                        const similar = await this.plugin.vectorStore.querySimilar(queryEmbedding, 3);
+                        // Hybrid retrieval keeps chat RAG consistent with search.
+                        const similar = await this.plugin.hybridRetriever.retrieve({ query: cleanQuery, topK: 3 });
                         if (similar.length > 0) {
                             retrievedContext = similar.map(c => `File: ${c.filePath}\nContent:\n${c.text}`).join('\n\n---\n\n');
                         }

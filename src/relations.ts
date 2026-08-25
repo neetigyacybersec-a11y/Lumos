@@ -1,11 +1,11 @@
 import { Logger } from './logger';
 import { RelationEdge } from './relationStore';
-import LumosPlugin from './main';
+import { RelationExtractorHost } from './ports';
 
 export class RelationExtractor {
-    plugin: LumosPlugin;
+    plugin: RelationExtractorHost;
 
-    constructor(plugin: LumosPlugin) {
+    constructor(plugin: RelationExtractorHost) {
         this.plugin = plugin;
     }
 

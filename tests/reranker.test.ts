@@ -106,35 +106,44 @@ describe('reranker worker spawning under Obsidian origins', () => {
         })();
     });
 
-    it('end-to-end: hybrid retrieval uses the blob-spawned reranker', async () => {
-        const backend = createBlobWorkerBackend('/* bundle */')!;
-        let rerankCalls = 0;
-        const origScore = backend.score.bind(backend);
-        backend.score = async (q, docs) => {
-            rerankCalls++;
-            return docs.map(() => -1);
-        };
+	it('end-to-end: hybrid retrieval uses the blob-spawned reranker', async () => {
+		const backend = createBlobWorkerBackend('/* bundle */')!;
+		let rerankCalls = 0;
+		const loadedModels: string[] = [];
+		const origLoad = backend.load.bind(backend);
+		backend.load = async (modelId: string) => {
+			loadedModels.push(modelId);
+			await origLoad(modelId);
+		};
+		const origScore = backend.score.bind(backend);
+		backend.score = async (q, docs) => {
+			rerankCalls++;
+			return docs.map(() => -1);
+		};
 
-        const embedSpy = vi.fn(async () => [1, 0, 0, 0, 0, 0, 0, 0]);
-        const plugin: any = {
-            settings: { enableHybridSearch: true, rerankerModel: 'mini', rerankCandidates: 20 },
-            embeddingPipeline: { embed: embedSpy },
-            vectorStore: {
-                querySimilar: async () => [
-                    { filePath: 'a.md', text: 'alpha', similarity: 0.9 },
-                ],
-            },
-        };
-        const lexical = new LexicalIndex();
-        lexical.upsert('a.md', [{ text: 'alpha' }]);
-        const retriever = new HybridRetriever(plugin, lexical, new Reranker(() => backend));
+		const embedSpy = vi.fn(async () => [1, 0, 0, 0, 0, 0, 0, 0]);
+		const plugin: any = {
+			settings: { enableHybridSearch: true, rerankerModel: 'mini', rerankCandidates: 20 },
+			embeddingPipeline: { embed: embedSpy },
+			vectorStore: {
+				querySimilar: async () => [
+					{ filePath: 'a.md', text: 'alpha', similarity: 0.9 },
+				],
+			},
+		};
+		const lexical = new LexicalIndex();
+		lexical.upsert('a.md', [{ text: 'alpha' }]);
+		const retriever = new HybridRetriever(plugin, lexical, new Reranker(() => backend));
 
-        // Drive the load handshake out of band.
-        setTimeout(() => workerHandler?.({ data: { type: 'ready' } }), 10);
+		// Drive the load handshake out of band.
+		setTimeout(() => workerHandler?.({ data: { type: 'ready' } }), 10);
 
-        const results = await retriever.retrieve({ query: 'alpha', topK: 5 });
-        expect(rerankCalls).toBeGreaterThan(0);
-        expect(results[0].filePath).toBe('a.md');
-        void origScore;
-    });
+		const results = await retriever.retrieve({ query: 'alpha', topK: 5 });
+		expect(rerankCalls).toBeGreaterThan(0);
+		// REGRESSION guard: the selected model key must reach the worker — a
+		// dropped argument here silently loaded `undefined` and never ranked.
+		expect(loadedModels).toEqual(['Xenova/ms-marco-MiniLM-L-6-v2']);
+		expect(results[0].filePath).toBe('a.md');
+		void origScore;
+	});
 });

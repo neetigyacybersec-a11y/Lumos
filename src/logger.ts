@@ -1,13 +1,14 @@
-import LumosPlugin from './main';
+import { LogSink } from './ports';
 
 export class Logger {
-    static plugin: LumosPlugin | null = null;
+    static plugin: LogSink | null = null;
     static maxLogLines = 1000;
     static logFile = 'lumos-debug.log';
     private static logQueue: string[] = [];
     private static isWriting = false;
 
-    static init(plugin: LumosPlugin) {
+    static init(sink: LogSink) {
+        this.plugin = sink;
         this.plugin = plugin;
     }
 

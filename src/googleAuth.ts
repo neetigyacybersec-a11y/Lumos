@@ -1,6 +1,6 @@
 import { Logger } from './logger';
 import { Notice, Platform, requestUrl } from "obsidian";
-import LumosPlugin from "./main";
+import { GoogleHost } from "./ports";
 
 const PORT = 42813;
 const REDIRECT_URL = `http://127.0.0.1:${PORT}/callback`;
@@ -30,7 +30,7 @@ async function generateChallenge(verifier: string): Promise<string> {
 let cachedAccessToken: string | null = null;
 let tokenExpirationTime: number = 0;
 
-export async function refreshAccessToken(plugin: LumosPlugin): Promise<string | null> {
+export async function refreshAccessToken(plugin: GoogleHost): Promise<string | null> {
     if (!plugin.settings.googleRefreshToken) return null;
 
 	const useCustomClient = !!plugin.settings.googleClientId;
@@ -66,7 +66,7 @@ export async function refreshAccessToken(plugin: LumosPlugin): Promise<string | 
     }
 }
 
-export async function getGoogleAuthToken(plugin: LumosPlugin): Promise<string | null> {
+export async function getGoogleAuthToken(plugin: GoogleHost): Promise<string | null> {
 	if (!plugin.settings.googleRefreshToken) return null;
 
 	if (cachedAccessToken && tokenExpirationTime > +new Date()) {
@@ -92,7 +92,7 @@ const exchangeCodeForTokenDefault = async (state: string, verifier: string, code
 	return request.json;
 }
 
-const exchangeCodeForTokenCustom = async (plugin: LumosPlugin, state: string, verifier: string, code: string): Promise<any> => {
+const exchangeCodeForTokenCustom = async (plugin: GoogleHost, state: string, verifier: string, code: string): Promise<any> => {
 	const url = `https://oauth2.googleapis.com/token`
 		+ `?grant_type=authorization_code`
 		+ `&client_id=${plugin.settings.googleClientId.trim()}`
@@ -110,7 +110,7 @@ const exchangeCodeForTokenCustom = async (plugin: LumosPlugin, state: string, ve
 	return response.json();
 }
 
-export async function loginGoogle(plugin: LumosPlugin, onComplete: () => void): Promise<void> {
+export async function loginGoogle(plugin: GoogleHost, onComplete: () => void): Promise<void> {
 	const useCustomClient = !!plugin.settings.googleClientId;
 	const CLIENT_ID = useCustomClient ? plugin.settings.googleClientId : PUBLIC_CLIENT_ID;
 

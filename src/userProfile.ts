@@ -1,10 +1,10 @@
 import { Logger } from './logger';
 import { App, TFile, requestUrl, Notice } from 'obsidian';
-import RelationPlugin from './main';
+import { ProfileHost } from './ports';
 
 export class UserProfileManager {
     app: App;
-    plugin: RelationPlugin;
+    plugin: ProfileHost;
     activityBuffer: string = '';
     insightBuffer: string = '';
     wordCount: number = 0;
@@ -12,7 +12,7 @@ export class UserProfileManager {
     isUpdating: boolean = false;
     isPaused: boolean = false;
 
-    constructor(app: App, plugin: RelationPlugin) {
+    constructor(app: App, plugin: ProfileHost) {
         this.app = app;
         this.plugin = plugin;
     }

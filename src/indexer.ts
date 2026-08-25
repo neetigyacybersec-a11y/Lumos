@@ -1,8 +1,9 @@
 import { Logger } from './logger';
 import { TFile, Notice } from 'obsidian';
-import LumosPlugin from './main';
+import { IndexerHost } from './ports';
+import { planChunkEmbeddings, mergeEdges } from './indexing/stages';
 import { RELATION_VIEW_TYPE, RelationSidebarView } from './sidebarView';
-import { hashString, isPathIgnored } from './utils';
+import { hashString, isPathIgnored, INDEXABLE_EXTENSIONS, IMAGE_EXTENSIONS } from './utils';
 import { IndexingProgressUI } from './progressUi';
 import { fetchAllCalendarEvents, GoogleEvent } from './googleCalendar';
 import { TerminalApiError, TransientApiError } from './llmService';
@@ -11,7 +12,7 @@ import { TerminalApiError, TransientApiError } from './llmService';
 const FILE_WATCHDOG_MS = 120_000;
 
 export class BackgroundIndexer {
-    plugin: LumosPlugin;
+    plugin: IndexerHost;
     queue: TFile[] = [];
     isProcessing: boolean = false;
     progressUi: IndexingProgressUI;
@@ -22,7 +23,7 @@ export class BackgroundIndexer {
     private lastFailureAt: Map<string, number> = new Map();
     private halted: boolean = false;
 
-    constructor(plugin: LumosPlugin) {
+    constructor(plugin: IndexerHost) {
         this.plugin = plugin;
         this.progressUi = new IndexingProgressUI();
     }
@@ -62,7 +63,7 @@ export class BackgroundIndexer {
         
         for (const file of files) {
             const ext = file.extension.toLowerCase();
-            if (!['md', 'pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(ext)) continue;
+            if (!INDEXABLE_EXTENSIONS.includes(ext)) continue;
             if (file.path === this.plugin.settings.userProfilePath) continue;
             if (isPathIgnored(file.path, this.plugin.settings.ignoredFolders)) continue;
 
@@ -115,7 +116,7 @@ export class BackgroundIndexer {
                     }),
                 ]);
             } catch (e) {
-                Logger.error(`[RelationPlugin] Abandoning ${file.path}:`, e);
+                Logger.error(`[Lumos] Abandoning ${file.path}:`, e);
                 await this.plugin.vectorStore.upsert(file.path, []);
                 this.markFailed(file.path);
             } finally {
@@ -176,11 +177,49 @@ export class BackgroundIndexer {
      * whether any network call was made. Terminal failures set this.halted.
      */
     private async processFile(file: TFile): Promise<boolean> {
-        let madeNetworkCall = false;
-        let retryCount = 0;
+        try {
+            return await this.runWithRetry(async () => {
+                const made = await this.indexFileAttempt(file);
+                return made;
+            });
+        } catch (e) {
+            if (e instanceof TerminalApiError) throw e; // halt propagates to the queue loop
+            Logger.error(`[Lumos] Failed to index ${file.path}`, e);
+            await this.plugin.vectorStore.upsert(file.path, []);
+            this.markFailed(file.path);
+            return false;
+        }
+    }
 
+    /** Shared retry/backoff/circuit-break policy for every network path. */
+    private async runWithRetry<T>(op: () => Promise<T>): Promise<T> {
+        let retryCount = 0;
         while (true) {
             try {
+                return await op();
+            } catch (e) {
+                if (e instanceof TerminalApiError) {
+                    Logger.error(`[Lumos] Terminal API Error. Circuit breaking:`, e);
+                    this.halted = true;
+                    new Notice(`🚨 LLM Indexing Halted: ${e.message}`, 15000);
+                    throw e;
+                } else if (e instanceof TransientApiError && retryCount < 3) {
+                    Logger.warn(`[Lumos] Transient API Error. Retrying (Attempt ${retryCount + 1})...`, e);
+                    retryCount++;
+                    const delay = 2000 * Math.pow(2, retryCount);
+                    new Notice(`Network error, retrying in ${delay/1000}s...`, delay);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
+    private async indexFileAttempt(file: TFile): Promise<boolean> {
+        {
+                let madeNetworkCall = false;
+
                 // Check if file was somehow deleted while waiting
                 if (!(await this.plugin.app.vault.adapter.exists(file.path))) {
                     return madeNetworkCall;
@@ -200,7 +239,7 @@ export class BackgroundIndexer {
                         Logger.error(`Failed to parse PDF ${file.path}`, e);
                         shouldSkip = true;
                     }
-                } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
+                } else if (IMAGE_EXTENSIONS.includes(ext)) {
                     try {
                         const hasText = await this.plugin.localOcr.hasText(file);
                         if (hasText) {
@@ -230,29 +269,18 @@ export class BackgroundIndexer {
                 // Embed only new/changed chunks; reuse stored vectors for
                 // chunks whose text is unchanged (#incremental-edit).
                 const previousChunks = this.plugin.vectorStore.getChunks(file.path);
-                const reusable = new Map<string, number[]>();
-                for (const prev of previousChunks) {
-                    if (prev.chunkHash && prev.embedding.length > 0) {
-                        reusable.set(prev.chunkHash, prev.embedding);
-                    }
-                }
                 const isPartialUpdate = previousChunks.length > 0;
 
                 const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
-                let firstEmbedding: number[] | null = null;
-                const changedChunkTexts: string[] = [];
-                const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
-                    const chunkHash = hashString(text);
-                    let embedding = reusable.get(chunkHash);
-                    if (!embedding) {
-                        embedding = await this.plugin.embeddingPipeline.embed(text);
-                        madeNetworkCall = true;
-                        changedChunkTexts.push(text);
-                    }
-                    if (i === 0) firstEmbedding = embedding;
-                    return { id: `${file.path}#${i}`, filePath: file.path, text, embedding, contentHash, chunkHash };
-                }));
-                await this.plugin.vectorStore.upsert(file.path, vectorChunks);
+                const plan = await planChunkEmbeddings(
+                    file.path, chunks, previousChunks, contentHash,
+                    (text) => this.plugin.embeddingPipeline.embed(text)
+                );
+                const vectorChunks = plan.vectorChunks;
+                const changedChunkTexts = plan.changedChunkTexts;
+                if (changedChunkTexts.length > 0) madeNetworkCall = true;
+                const firstEmbedding: number[] | null = vectorChunks.length > 0 ? vectorChunks[0].embedding : null;
+                await this.plugin.vectorStore.upsert(file.path, vectorChunks as any);
 
                 // Extract Relations (only if it has similar notes to compare to)
                 if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
@@ -303,9 +331,7 @@ export class BackgroundIndexer {
                         if (isPartialUpdate) {
                             const existing = this.plugin.relationStore.getEdgesForPath(file.path)
                                 .filter(e => e.source === file.path);
-                            const superseded = new Set(scoredEdges.map(e => `${e.target}|${e.relationType}`));
-                            const kept = existing.filter(e => !superseded.has(`${e.target}|${e.relationType}`));
-                            finalEdges = [...kept, ...scoredEdges];
+                            finalEdges = mergeEdges(existing, scoredEdges);
                         }
 
                         await this.plugin.relationStore.upsertEdges(file.path, finalEdges, true);
@@ -321,29 +347,7 @@ export class BackgroundIndexer {
                     await this.plugin.userProfileManager.addActivity(cleanText);
                 }
 
-                retryCount = 0; // Success
                 return madeNetworkCall;
-            } catch (e) {
-                if (e instanceof TerminalApiError) {
-                    Logger.error(`[Lumos] Terminal API Error. Circuit breaking:`, e);
-                    this.halted = true;
-                    new Notice(`🚨 LLM Indexing Halted: ${e.message}`, 15000);
-                    return madeNetworkCall;
-                } else if (e instanceof TransientApiError && retryCount < 3) {
-                    Logger.warn(`[Lumos] Transient API Error. Retrying (Attempt ${retryCount + 1})...`, e);
-                    retryCount++;
-                    const delay = 2000 * Math.pow(2, retryCount);
-                    new Notice(`Network error, retrying in ${delay/1000}s...`, delay);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                    continue; // Retry the same file
-                } else {
-                    Logger.error(`[RelationPlugin] Failed to index ${file.path}`, e);
-                    // Mark as processed with 0 chunks to prevent infinite poison-pill retry loops on startup
-                    await this.plugin.vectorStore.upsert(file.path, []);
-                    this.markFailed(file.path);
-                    return madeNetworkCall;
-                }
-            }
         }
     }
 
@@ -354,7 +358,6 @@ export class BackgroundIndexer {
         if (events.length === 0) return;
         
         let processedCount = 0;
-        let retryCount = 0;
         let cursor = 0;
         
         while (cursor < events.length) {
@@ -379,15 +382,18 @@ export class BackgroundIndexer {
             }
 
             try {
-                // Embed
+                await this.runWithRetry(async () => {
+                // Embed — same incremental chunk plan as vault files
                 const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
-                let firstEmbedding: number[] | null = null;
-                const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
-                    const embedding = await this.plugin.embeddingPipeline.embed(text);
-                    if (i === 0) firstEmbedding = embedding;
-                    return { id: `${virtualPath}#${i}`, filePath: virtualPath, text, embedding, contentHash };
-                }));
-                await this.plugin.vectorStore.upsert(virtualPath, vectorChunks);
+                const previousChunks = this.plugin.vectorStore.getChunks(virtualPath);
+                const plan = await planChunkEmbeddings(
+                    virtualPath, chunks, previousChunks, contentHash,
+                    (text) => this.plugin.embeddingPipeline.embed(text)
+                );
+                let firstEmbedding: number[] | null = plan.vectorChunks.length > 0 ? plan.vectorChunks[0].embedding : null;
+                if (plan.changedChunkTexts.length > 0 && !this.halted) {
+                    await this.plugin.vectorStore.upsert(virtualPath, plan.vectorChunks as any);
+                }
                 
                 // Extract Relations
                 if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
@@ -413,30 +419,16 @@ export class BackgroundIndexer {
                         await this.plugin.relationStore.upsertEdges(virtualPath, scoredEdges, true);
                     }
                 }
+                });
                 processedCount++;
-                
-                if (processedCount % 10 === 0) {
-                // await this.plugin.vectorStore.forceSave();
-                // await this.plugin.relationStore.forceSave();
-                }
-                
+
                 await new Promise(resolve => setTimeout(resolve, 1500)); // Delay for rate limit
-                retryCount = 0;
             } catch (e) {
-                if (e instanceof TerminalApiError) {
-                    Logger.error(`[Lumos] Terminal API Error during Calendar Indexing. Circuit breaking:`, e);
-                    new Notice(`🚨 Calendar Indexing Halted: ${e.message}`, 15000);
+                if (e instanceof TerminalApiError || this.halted) {
+                    Logger.error(`[Lumos] Calendar Indexing halted:`, e);
                     return; // Halt completely
-                } else if (e instanceof TransientApiError && retryCount < 3) {
-                    Logger.warn(`[Lumos] Transient API Error. Retrying (Attempt ${retryCount + 1})...`, e);
-                    retryCount++;
-                    const delay = 2000 * Math.pow(2, retryCount);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                    continue; // Skip the rest, loop will pull the event again
                 } else {
-                    Logger.error(`[RelationPlugin] Failed to index calendar event ${event.summary}`, e);
-                    retryCount = 0;
-                    // Removed cursor++ here to prevent double-increment
+                    Logger.error(`[Lumos] Failed to index calendar event ${event.summary}`, e);
                 }
             }
             cursor++; // Move past processed event

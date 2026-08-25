@@ -1,6 +1,6 @@
 import { Logger } from './logger';
 import { requestUrl } from "obsidian";
-import LumosPlugin from "./main";
+import { GoogleHost } from "./ports";
 import { getGoogleAuthToken } from "./googleAuth";
 
 export interface GoogleEvent {
@@ -13,7 +13,7 @@ export interface GoogleEvent {
     htmlLink: string;
 }
 
-export async function fetchAllCalendarEvents(plugin: LumosPlugin, daysBack: number = 30, daysForward: number = 30): Promise<GoogleEvent[]> {
+export async function fetchAllCalendarEvents(plugin: GoogleHost, daysBack: number = 30, daysForward: number = 30): Promise<GoogleEvent[]> {
     if (!plugin.settings.googleSyncEnabled) return [];
 
     const token = await getGoogleAuthToken(plugin);

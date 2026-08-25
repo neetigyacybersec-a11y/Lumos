@@ -4,7 +4,7 @@ import { Plugin } from 'obsidian';
 export interface RelationEdge {
     source: string;
     target: string;
-    relationType: 'duplicate-effort' | 'prerequisite' | 'contradicts' | 'extends' | 'thematic-only';
+    relationType: 'duplicate-effort' | 'prerequisite' | 'contradicts' | 'extends' | 'thematic-only' | 'discusses-meeting' | 'follows-up';
     confidence: number; // LLM confidence
     evidence: string;
     scores?: {

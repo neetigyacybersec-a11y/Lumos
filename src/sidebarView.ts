@@ -218,8 +218,8 @@ export class RelationSidebarView extends ItemView {
                     if (text.trim().length > 0) {
                         const chunks = this.plugin.embeddingPipeline.chunkText(text);
                         if (chunks.length > 0) {
-                            const embedding = await this.plugin.embeddingPipeline.embed(chunks[0]);
-                            const similar = await this.plugin.vectorStore.querySimilar(embedding, 10);
+                            // Single retrieval entry point: hybrid fusion + rerank.
+                            const similar = await this.plugin.hybridRetriever.retrieve({ query: chunks[0], topK: 10, excludeFilePath: activeFile.path });
                             
                             // Filter out self
                             const uniqueSimilar = [];

@@ -1,5 +1,5 @@
 import { Logger } from '../logger';
-import LumosPlugin from '../main';
+import { RetrievalHost } from '../ports';
 import { LexicalIndex } from './lexicalIndex';
 import { Reranker } from './reranker';
 
@@ -55,7 +55,7 @@ export interface RetrieveOptions {
  */
 export class HybridRetriever {
     constructor(
-        private plugin: LumosPlugin,
+        private plugin: RetrievalHost,
         private lexical: LexicalIndex,
         private reranker: Reranker
     ) {}
@@ -81,7 +81,8 @@ export class HybridRetriever {
             const toRerank = candidates.slice(0, depth);
             const scores = await this.reranker.rerank(
                 opts.query ?? opts.lexicalQuery ?? '',
-                toRerank.map((c) => c.text)
+                toRerank.map((c) => c.text),
+                this.plugin.settings.rerankerModel
             );
             if (scores) {
                 return toRerank

@@ -47,11 +47,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	requestTimeoutSec: 60,
 }
 
-export interface QueuedFile {
-	file: TFile;
-	timestamp: number;
-}
-
 export interface ParsedNote {
 	cleanText: string;
 	wikilinks: string[];

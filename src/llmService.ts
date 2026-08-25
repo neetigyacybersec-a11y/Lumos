@@ -1,116 +1,24 @@
 import { Logger } from './logger';
-import { requestUrl } from 'obsidian';
-import LumosPlugin from './main';
+import { LLMServiceHost } from './ports';
+import { createTransport, ChatMessage, TerminalApiError, TransientApiError } from './llm/transport';
 
-export interface ChatMessage {
-    role: 'user' | 'assistant' | 'system';
-    content: string;
-}
-
-export class TerminalApiError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "TerminalApiError";
-    }
-}
-
-export class TransientApiError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "TransientApiError";
-    }
-}
-
-/**
- * Remote calls must never hang the caller: requestUrl/fetch have no default
- * timeout, so a stalled connection froze whole indexing runs. Races the
- * promise against a timer and surfaces timeouts as TransientApiError so the
- * existing retry/circuit-break logic engages uniformly.
- */
-export function withApiTimeout<T>(promise: Promise<T>, timeoutSec: number, label: string): Promise<T> {
-    const seconds = Math.max(1, Math.floor(timeoutSec || 60));
-    let timer: ReturnType<typeof setTimeout>;
-    const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(
-            () => reject(new TransientApiError(`${label} timed out after ${seconds}s`)),
-            seconds * 1000
-        );
-    });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
+export { TerminalApiError, TransientApiError };
+export type { ChatMessage };
 
 export class LLMService {
-    plugin: LumosPlugin;
+    plugin: LLMServiceHost;
 
-    constructor(plugin: LumosPlugin) {
+    constructor(plugin: LLMServiceHost) {
         this.plugin = plugin;
     }
 
     async callLLM(messages: ChatMessage[], isRouting: boolean = false, expectJson: boolean = false): Promise<string> {
-        let resultText = '';
-        if (this.plugin.settings.provider === 'ollama') {
-            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/api/chat';
-            const body: any = {
-                model: this.plugin.settings.llmModelName || 'llama3',
-                messages: messages,
-                stream: false
-            };
-            if (expectJson) {
-                body.format = 'json';
-            }
-            try {
-                const res = await withApiTimeout(requestUrl({
-                    url,
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                    throw: false
-                }), this.plugin.settings.requestTimeoutSec, 'Ollama request');
-                
-                if (res.status !== 200) {
-                    if (res.status === 404 || res.status === 400) throw new TerminalApiError(`Ollama Error (${res.status}): Model not found or bad request.`);
-                    throw new TransientApiError(`Ollama Network Error (${res.status})`);
-                }
-                resultText = res.json.message.content;
-            } catch (e) {
-                if (e instanceof TerminalApiError || e instanceof TransientApiError) throw e;
-                throw new TransientApiError(`Ollama Connection Failed: ${e.message}`);
-            }
-        } else {
-            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/chat/completions';
-            const body: any = {
-                model: this.plugin.settings.llmModelName || 'meta-llama/llama-3-8b-instruct',
-                messages: messages
-            };
-            if (expectJson) {
-                body.response_format = { type: "json_object" };
-            }
-            try {
-                const res = await withApiTimeout(requestUrl({
-                    url,
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${this.plugin.settings.apiKey}`
-                    },
-                    body: JSON.stringify(body),
-                    throw: false
-                }), this.plugin.settings.requestTimeoutSec, 'LLM request');
-                
-                if (res.status !== 200) {
-                    if (res.status === 401 || res.status === 402 || res.status === 403 || res.status === 404 || res.status === 400) {
-                        throw new TerminalApiError(`API Error (${res.status}): ${res.text}`);
-                    } else {
-                        throw new TransientApiError(`API Transient Error (${res.status}): ${res.text}`);
-                    }
-                }
-                resultText = res.json.choices[0].message.content;
-            } catch (e) {
-                if (e instanceof TerminalApiError || e instanceof TransientApiError) throw e;
-                throw new TransientApiError(`API Connection Failed: ${e.message}`);
-            }
+        try {
+            return await createTransport(this.plugin.settings).chat(messages, { expectJson });
+        } catch (e) {
+            if (e instanceof TerminalApiError || e instanceof TransientApiError) throw e;
+            throw new TransientApiError(`API Connection Failed: ${e.message}`);
         }
-        return resultText;
     }
 
     async beautifyText(text: string): Promise<string> {

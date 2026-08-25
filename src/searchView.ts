@@ -1,4 +1,5 @@
 import { Logger } from './logger';
+import { createTransport } from './llm/transport';
 import { ItemView, WorkspaceLeaf, requestUrl, MarkdownRenderer, TFile, MarkdownView } from 'obsidian';
 import LumosPlugin from './main';
 
@@ -325,81 +326,6 @@ ${contextText}`;
             messages.push({ role: msg.role === 'user' ? 'user' : 'assistant', content: msg.content });
         }
 
-        let fullContent = '';
-
-        if (this.plugin.settings.provider === 'ollama') {
-            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/api/chat';
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    model: this.plugin.settings.llmModelName || 'llama3',
-                    messages: messages,
-                    stream: true
-                })
-            });
-            
-            if (!res.ok) throw new Error(`Ollama failed (${res.status}): ${await res.text()}`);
-            
-            const reader = res.body?.getReader();
-            const decoder = new TextDecoder();
-            while (true) {
-                const { done, value } = await reader!.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n').filter(l => l.trim() !== '');
-                for (const line of lines) {
-                    try {
-                        const parsed = JSON.parse(line);
-                        if (parsed.message && parsed.message.content) {
-                            onChunk(parsed.message.content);
-                            fullContent += parsed.message.content;
-                        }
-                    } catch(e) {}
-                }
-            }
-        } else {
-            const url = this.plugin.settings.baseUrl.replace(/\/$/, '') + '/chat/completions';
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.plugin.settings.apiKey}`,
-                    'HTTP-Referer': 'https://github.com/obsidianmd/obsidian-api',
-                    'X-Title': 'Obsidian Relation Plugin'
-                },
-                body: JSON.stringify({
-                    model: this.plugin.settings.llmModelName || 'meta-llama/llama-3-8b-instruct',
-                    messages: messages,
-                    stream: true
-                })
-            });
-            
-            if (!res.ok) throw new Error(`OpenRouter failed (${res.status}): ${await res.text()}`);
-            
-            const reader = res.body?.getReader();
-            const decoder = new TextDecoder();
-            while (true) {
-                const { done, value } = await reader!.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n').filter(l => l.trim() !== '');
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data.trim() === '[DONE]') continue;
-                        try {
-                            const parsed = JSON.parse(data);
-                            if (parsed.choices && parsed.choices[0].delta && parsed.choices[0].delta.content) {
-                                onChunk(parsed.choices[0].delta.content);
-                                fullContent += parsed.choices[0].delta.content;
-                            }
-                        } catch(e) {}
-                    }
-                }
-            }
-        }
-        
-        return fullContent;
+        return createTransport(this.plugin.settings).chatStream(messages, onChunk);
     }
 }

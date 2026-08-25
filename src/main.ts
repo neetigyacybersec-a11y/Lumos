@@ -253,7 +253,7 @@ export default class LumosPlugin extends Plugin {
                     const chunks = this.embeddingPipeline.chunkText(text);
                     if (chunks.length > 0) {
                         const embedding = await this.embeddingPipeline.embed(chunks[0]);
-                        const similar = await this.vectorStore.querySimilar(embedding, 30);
+                        const similar = await this.hybridRetriever.retrieve({ queryVector: embedding, topK: 30 });
                         vaultFiles = similar.map(s => {
                             const f = this.app.vault.getAbstractFileByPath(s.filePath);
                             return f ? f.name.replace(/\.[^/.]+$/, "") : s.filePath;

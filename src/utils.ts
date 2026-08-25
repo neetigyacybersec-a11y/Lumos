@@ -9,6 +9,10 @@ export function hashString(str: string): string {
     return hash.toString(36); // Short base36 string
 }
 
+/** File types Lumos will parse, embed and relate. Single source of truth. */
+export const INDEXABLE_EXTENSIONS = ['md', 'pdf', 'png', 'jpg', 'jpeg', 'webp'];
+export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp'];
+
 export function isPathIgnored(path: string, ignoredFoldersStr: string): boolean {
     if (!ignoredFoldersStr || ignoredFoldersStr.trim() === '') return false;
     
