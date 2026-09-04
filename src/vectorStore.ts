@@ -34,6 +34,12 @@ export class VectorStore {
     public indexedFiles: Set<string> = new Set();
     private db: IDBDatabase | null = null;
     /**
+     * Set when the persisted index could not be read (IndexedDB open/read
+     * failure). Consumers must NOT treat this as "empty vault" and rehash;
+     * they should tell the user the index is unavailable instead.
+     */
+    public loadFailed: boolean = false;
+    /**
      * Notified after every committed mutation so derived indexes (lexical
      * BM25) can mirror the corpus without polling.
      */
@@ -49,6 +55,7 @@ export class VectorStore {
     }
 
     async load() {
+        this.loadFailed = false;
         try {
             this.db = await openDB();
             
@@ -69,6 +76,7 @@ export class VectorStore {
             console.error('Failed to load VectorStore from IndexedDB', e);
             this.vectors = [];
             this.indexedFiles = new Set();
+            this.loadFailed = true;
         }
     }
 

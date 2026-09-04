@@ -2,6 +2,7 @@ import { Logger } from './logger';
 import { TFile, Notice } from 'obsidian';
 import { IndexerHost } from './ports';
 import { planChunkEmbeddings, mergeEdges } from './indexing/stages';
+import { readManifest, writeManifest, manifestNeedsRebuild } from './indexManifest';
 import { RELATION_VIEW_TYPE, RelationSidebarView } from './sidebarView';
 import { hashString, isPathIgnored, INDEXABLE_EXTENSIONS, IMAGE_EXTENSIONS } from './utils';
 import { IndexingProgressUI } from './progressUi';
@@ -57,7 +58,23 @@ export class BackgroundIndexer {
 
     async start() {
         if (this.isProcessing) return;
-        
+
+        // The persisted index could not be read. NEVER treat this as "empty
+        // vault" and silently rehash everything (a stash-burning full scan).
+        // Tell the user; a rebuild happens only via the explicit command.
+        if (this.plugin.vectorStore.loadFailed) {
+            new Notice('Lumos: your saved index could not be loaded. Search will be empty until you run "Clear Index and Re-scan Vault".', 8000);
+            return;
+        }
+
+        // A different embedding model or schema than the index was built with
+        // is a non-blocking signal: inform, but do NOT auto-rehash. The user
+        // runs the manual rebuild command if they want fresh vectors.
+        const manifest = await readManifest(this.plugin, this.plugin.app.vault.adapter);
+        if (manifestNeedsRebuild(manifest, this.plugin.settings.embeddingModelName)) {
+            new Notice('Lumos: your index was built with a different embedding model/schema. Run "Clear Index and Re-scan Vault" to rebuild.', 8000);
+        }
+
         const files = this.plugin.app.vault.getFiles();
         let added = 0;
         
@@ -77,6 +94,10 @@ export class BackgroundIndexer {
             this.processedFiles = 0;
             this.progressUi.show(this.totalFiles);
             this.processQueue();
+        } else {
+            // Nothing to index this run: record the index metadata so a later
+            // change to the embedding model/schema is detected without a rehash.
+            await writeManifest(this.plugin, this.plugin.app.vault.adapter, this.plugin.settings.embeddingModelName);
         }
         
         // After starting the queue for files, let's also fetch and index calendar events
@@ -149,6 +170,10 @@ export class BackgroundIndexer {
 
         // Final forced save once everything is queued
         await this.plugin.relationStore.forceSave();
+
+        // Record the index metadata (model, schema, plugin version) so a later
+        // change to the embedding model/schema is detected without a rehash.
+        await writeManifest(this.plugin, this.plugin.app.vault.adapter, this.plugin.settings.embeddingModelName);
 
         // Ensure profile file exists so the user knows where it is
         const path = this.plugin.settings.userProfilePath;

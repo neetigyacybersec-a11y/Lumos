@@ -35,7 +35,8 @@ export interface WatcherHost {
 }
 
 export interface IndexerHost {
-    settings: Pick<PluginSettings, 'userProfilePath' | 'ignoredFolders' | 'googleSyncEnabled' | 'googleRefreshToken'>;
+    manifest?: { dir?: string; version?: string };
+    settings: Pick<PluginSettings, 'userProfilePath' | 'ignoredFolders' | 'googleSyncEnabled' | 'googleRefreshToken' | 'embeddingModelName'>;
     app: {
         vault: {
             getFiles(): TFile[];
