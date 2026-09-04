@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Logger } from '../src/logger';
+import { createLogSink } from './mocks/logSink';
 
 /**
  * Regression: Logger.init is the first call in plugin onload — a broken init
@@ -7,37 +8,70 @@ import { Logger } from '../src/logger';
  * plugin with "Failed to load".
  */
 
-const sink = {
-    manifest: { dir: '/fake/dir' },
-    app: { vault: { adapter: { exists: async () => false, read: async () => '', write: async () => {} } } },
-};
-
 describe('Logger', () => {
     afterEach(() => {
         // Reset static state between tests
-        (Logger as any).plugin = null;
-        (Logger as any).logQueue.length = 0;
+        Logger.init(null as any);
+        Logger.testState().logQueue.length = 0;
     });
 
-    it('REGRESSION: init assigns the sink without throwing and enables file logging', () => {
-        expect(() => Logger.init(sink as any)).not.toThrow();
-        expect((Logger as any).plugin).toBe(sink);
+    it('REGRESSION: init assigns the sink without throwing', () => {
+        const sink = createLogSink();
+        expect(() => Logger.init(sink)).not.toThrow();
+        expect(Logger.testState().plugin).toBe(sink);
     });
 
     it('writeLog queues when a sink is present', async () => {
-        Logger.init(sink as any);
+        Logger.init(createLogSink());
         const processSpy = vi.spyOn(Logger as any, 'processQueue').mockImplementation(() => {});
         Logger.info('hello world');
-        expect((Logger as any).logQueue.some((l: string) => l.includes('hello world'))).toBe(true);
+        expect(Logger.testState().logQueue.some((l: string) => l.includes('hello world'))).toBe(true);
         processSpy.mockRestore();
     });
 
     it('stays console-only without a sink', async () => {
-        (Logger as any).plugin = null;
+        Logger.init(null as any);
         const processSpy = vi.spyOn(Logger as any, 'processQueue');
         await Logger.writeLog('INFO', 'no sink message');
         expect(processSpy).not.toHaveBeenCalled();
-        expect((Logger as any).logQueue).toHaveLength(0);
+        expect(Logger.testState().logQueue).toHaveLength(0);
         processSpy.mockRestore();
+    });
+
+    it('writes queued lines to the log file through the adapter, capping at maxLogLines', async () => {
+        const written: string[] = [];
+        let current: string[] = ['existing line'];
+
+        const sink = createLogSink({
+            manifest: { dir: '/fake/dir' },
+            app: {
+                vault: {
+                    adapter: {
+                        exists: async () => true,
+                        read: async () => current.join('\n'),
+                        write: async (_path, data) => {
+                            written.length = 0;
+                            written.push(...data.split('\n').filter((l) => l.length > 0));
+                        },
+                    },
+                },
+            },
+        });
+
+        Logger.init(sink);
+        Logger.maxLogLines = 3;
+        Logger.info('line one');
+        Logger.info('line two');
+        await Logger.writeLog('INFO', 'line three');
+
+        // processQueue is fire-and-forget; drain the microtask/retry chain before asserting.
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(written).toHaveLength(3);
+        expect(written.some((l) => l.includes('line one'))).toBe(true);
+        expect(written.some((l) => l.includes('line two'))).toBe(true);
+        expect(written.some((l) => l.includes('line three'))).toBe(true);
+        expect(written.some((l) => l.includes('existing line'))).toBe(false);
     });
 });

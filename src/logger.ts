@@ -11,6 +11,15 @@ export class Logger {
         this.plugin = sink;
     }
 
+    static testState() {
+        return {
+            plugin: this.plugin,
+            logFile: this.logFile,
+            maxLogLines: this.maxLogLines,
+            logQueue: this.logQueue,
+        };
+    }
+
     static async writeLog(level: string, message: string, data?: any) {
         const timestamp = new Date().toISOString();
         let logLine = `[${timestamp}] [${level}] ${message}`;
