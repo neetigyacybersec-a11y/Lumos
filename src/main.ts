@@ -6,6 +6,7 @@ import { Watcher } from './watcher';
 import { Parser } from './parser';
 import { VectorStore } from './vectorStore';
 import { EmbeddingPipeline } from './embeddings';
+import { createTransport, LLMTransport } from './llm/transport';
 
 import { RelationStore } from './relationStore';
 import { RelationExtractor } from './relations';
@@ -40,6 +41,7 @@ export default class LumosPlugin extends Plugin {
 	localOcr: LocalOcr;
 	userProfileManager: UserProfileManager;
 	llmService: LLMService;
+	llmTransport: LLMTransport;
 	lexicalIndex: LexicalIndex;
 	hybridRetriever: HybridRetriever;
 
@@ -359,7 +361,8 @@ export default class LumosPlugin extends Plugin {
 
 		this.watcher = new Watcher(this);
 		this.parser = new Parser(this.app);
-		this.llmService = new LLMService(this);
+		this.llmTransport = createTransport(this.settings);
+		this.llmService = new LLMService(this.llmTransport);
 		this.vectorStore = new VectorStore(this);
 		await this.vectorStore.load();
 
@@ -413,13 +416,13 @@ export default class LumosPlugin extends Plugin {
 		};
 		this.hybridRetriever = new HybridRetriever(this, this.lexicalIndex, reranker);
 
-		this.embeddingPipeline = new EmbeddingPipeline(this.settings);
+		this.embeddingPipeline = new EmbeddingPipeline(this.llmTransport);
 		this.relationStore = new RelationStore(this);
 		await this.relationStore.load();
 		this.relationExtractor = new RelationExtractor(this);
 		this.backlinkManager = new BacklinkManager(this.app, this.settings);
 		this.scoringEngine = new ScoringEngine(this.app);
-		this.visionExtractor = new VisionExtractor(this.app, this.settings);
+		this.visionExtractor = new VisionExtractor(this.app, this.llmTransport);
 		this.localOcr = new LocalOcr(this.app);
 		this.userProfileManager = new UserProfileManager(this.app, this);
 		
@@ -521,5 +524,15 @@ export default class LumosPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		this.rebuildLLMTransport();
+	}
+
+	/** Rebuilds the shared transport from live settings and re-injects it so
+	 *  provider/baseUrl/apiKey/model changes take effect without a restart. */
+	rebuildLLMTransport() {
+		this.llmTransport = createTransport(this.settings);
+		this.llmService.transport = this.llmTransport;
+		this.embeddingPipeline.transport = this.llmTransport;
+		this.visionExtractor.transport = this.llmTransport;
 	}
 }

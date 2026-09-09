@@ -1,22 +1,21 @@
-import { PluginSettings } from './types';
 import { App, TFile, arrayBufferToBase64 } from 'obsidian';
-import { createTransport } from './llm/transport';
+import { LLMTransport } from './llm/transport';
 
 const VISION_PROMPT = 'Extract all text and describe any useful semantic information, diagrams, or whiteboard notes from this image. Output only the extracted information without conversational filler.';
 
 export class VisionExtractor {
-    settings: PluginSettings;
+    transport: LLMTransport;
     app: App;
 
-    constructor(app: App, settings: PluginSettings) {
+    constructor(app: App, transport: LLMTransport) {
         this.app = app;
-        this.settings = settings;
+        this.transport = transport;
     }
 
     async extractImageText(file: TFile): Promise<string> {
         const buffer = await this.app.vault.readBinary(file);
         const base64 = arrayBufferToBase64(buffer);
-        return createTransport(this.settings).vision(VISION_PROMPT, base64, this.getMimeType(file.extension));
+        return this.transport.vision(VISION_PROMPT, base64, this.getMimeType(file.extension));
     }
 
     private getMimeType(extension: string): string {

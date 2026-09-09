@@ -105,19 +105,13 @@ export interface RetrievalHost {
 }
 
 export interface RelationExtractorHost {
-    llmService: { callLLM(messages: { role: string; content: string }[], isRouting?: boolean, expectJson?: boolean): Promise<string> };
+    llmService: { callLLM(messages: { role: string; content: string }[], expectJson?: boolean): Promise<string> };
 }
-
-export interface LLMServiceHost {
-    settings: ProviderSettingsShape;
-}
-
-export type ProviderSettingsShape = Pick<PluginSettings, 'provider' | 'baseUrl' | 'apiKey' | 'llmModelName' | 'embeddingModelName' | 'visionModelName' | 'requestTimeoutSec'>;
 
 export interface ProfileHost {
     app: AppLike;
     settings: Pick<PluginSettings, 'enableUserProfile' | 'userProfilePath' | 'userProfileWordThreshold'>;
-    llmService: { callLLM(messages: { role: string; content: string }[], isRouting?: boolean, expectJson?: boolean): Promise<string> };
+    llmService: { callLLM(messages: { role: string; content: string }[], expectJson?: boolean): Promise<string> };
 }
 
 export interface AppLike {

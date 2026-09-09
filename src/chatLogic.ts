@@ -31,7 +31,7 @@ export class ChatLogic {
                         { role: 'user', content: query }
                     ];
                     
-                    const searchDecision = await this.plugin.llmService.callLLM(searchDeciderPrompt, true);
+                    const searchDecision = await this.plugin.llmService.callLLM(searchDeciderPrompt);
                     
                     if (searchDecision && !searchDecision.includes('NO_SEARCH')) {
                         const cleanQuery = searchDecision.replace(/["']/g, '').trim();

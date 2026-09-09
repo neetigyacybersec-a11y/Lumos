@@ -62,7 +62,7 @@ If NO, output strictly the word "NO" (without quotes).`;
 
         try {
             const messages: any[] = [{ role: 'user', content: prompt }];
-            const jsonStr = await this.plugin.llmService.callLLM(messages, false, false);
+            const jsonStr = await this.plugin.llmService.callLLM(messages);
             const responseText = jsonStr.trim();
             
             if (responseText && responseText.toUpperCase() !== 'NO' && !responseText.includes('"NO"')) {
@@ -147,7 +147,7 @@ INSTRUCTIONS:
         let jsonStr = '';
         try {
             const messages: any[] = [{ role: 'user', content: prompt }];
-            jsonStr = await this.plugin.llmService.callLLM(messages, false, false);
+            jsonStr = await this.plugin.llmService.callLLM(messages);
         } catch (e) {
             throw new Error('LLM Profile Generation Failed');
         }

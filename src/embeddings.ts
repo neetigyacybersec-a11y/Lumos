@@ -1,5 +1,4 @@
-import { PluginSettings } from './types';
-import { createTransport } from './llm/transport';
+import { LLMTransport } from './llm/transport';
 
 /**
  * Splits an oversized paragraph (longer than `cap`) into pieces at sentence
@@ -36,10 +35,10 @@ function splitLongFragment(text: string, cap: number): string[] {
 }
 
 export class EmbeddingPipeline {
-    settings: PluginSettings;
+    transport: LLMTransport;
 
-    constructor(settings: PluginSettings) {
-        this.settings = settings;
+    constructor(transport: LLMTransport) {
+        this.transport = transport;
     }
 
     chunkText(text: string, maxTokensApprox: number = 500): string[] {
@@ -106,6 +105,6 @@ export class EmbeddingPipeline {
     }
 
     async embed(text: string): Promise<number[]> {
-        return createTransport(this.settings).embed(text);
+        return this.transport.embed(text);
     }
 }

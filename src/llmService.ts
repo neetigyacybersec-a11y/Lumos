@@ -1,24 +1,27 @@
 import { Logger } from './logger';
-import { LLMServiceHost } from './ports';
-import { createTransport, ChatMessage, TerminalApiError, TransientApiError } from './llm/transport';
+import { LLMTransport, ChatMessage, TerminalApiError, TransientApiError } from './llm/transport';
 
 export { TerminalApiError, TransientApiError };
 export type { ChatMessage };
 
 export class LLMService {
-    plugin: LLMServiceHost;
+    transport: LLMTransport;
 
-    constructor(plugin: LLMServiceHost) {
-        this.plugin = plugin;
+    constructor(transport: LLMTransport) {
+        this.transport = transport;
     }
 
-    async callLLM(messages: ChatMessage[], isRouting: boolean = false, expectJson: boolean = false): Promise<string> {
+    async callLLM(messages: ChatMessage[], expectJson: boolean = false): Promise<string> {
         try {
-            return await createTransport(this.plugin.settings).chat(messages, { expectJson });
+            return await this.transport.chat(messages, { expectJson });
         } catch (e) {
             if (e instanceof TerminalApiError || e instanceof TransientApiError) throw e;
             throw new TransientApiError(`API Connection Failed: ${e.message}`);
         }
+    }
+
+    async chatStream(messages: ChatMessage[], onChunk: (chunk: string) => void): Promise<string> {
+        return this.transport.chatStream(messages, onChunk);
     }
 
     async beautifyText(text: string): Promise<string> {

@@ -48,7 +48,7 @@ CRITICAL RULES:
         let jsonStr = '';
         
         try {
-            jsonStr = await this.plugin.llmService.callLLM(messages, false, true);
+            jsonStr = await this.plugin.llmService.callLLM(messages, true);
         } catch (e) {
             Logger.error('LLM generation failed in relations:', e);
             return { edges: [], profileInsights: null };

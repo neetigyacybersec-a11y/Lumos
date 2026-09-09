@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { VectorStore, cosineSimilarity } from '../src/vectorStore';
 import { EmbeddingPipeline } from '../src/embeddings';
-import { PluginSettings } from '../src/types';
+import { LLMTransport } from '../src/llm/transport';
 
 describe('VectorStore and Embeddings', () => {
 	it('calculates cosine similarity correctly', () => {
@@ -14,13 +14,7 @@ describe('VectorStore and Embeddings', () => {
 	});
 
 	it('chunks text into sizes roughly bound by token limits', () => {
-		const pipeline = new EmbeddingPipeline({
-			provider: 'ollama',
-			baseUrl: 'http://localhost:11434',
-			llmModelName: 'nomic-embed-text',
-			visionModelName: 'llava',
-			embeddingModelName: 'nomic-embed-text'
-		} as unknown as PluginSettings);
+		const pipeline = new EmbeddingPipeline({} as LLMTransport);
 		
 		const text = "Para 1\n\nPara 2\n\nPara 3\n\nPara 4";
 		// Force small token size to trigger multiple chunks
@@ -29,7 +23,7 @@ describe('VectorStore and Embeddings', () => {
 	});
 
 	it('keeps headings at the start of a new chunk (structure-aware)', () => {
-		const pipeline = new EmbeddingPipeline({ provider: 'ollama', baseUrl: 'x', llmModelName: 'm', visionModelName: 'v', embeddingModelName: 'm' } as unknown as PluginSettings);
+		const pipeline = new EmbeddingPipeline({} as LLMTransport);
 		const text = "Intro paragraph with a fair amount of body text.\n\n# Topic A\n\nContent for A.\n\n# Topic B\n\nContent for B.";
 		const chunks = pipeline.chunkText(text, 2);
 		// Every chunk that starts with a heading must begin exactly at that heading.
@@ -44,7 +38,7 @@ describe('VectorStore and Embeddings', () => {
 	});
 
 	it('splits an oversized single paragraph so no chunk exceeds the char cap', () => {
-		const pipeline = new EmbeddingPipeline({ provider: 'ollama', baseUrl: 'x', llmModelName: 'm', visionModelName: 'v', embeddingModelName: 'm' } as unknown as PluginSettings);
+		const pipeline = new EmbeddingPipeline({} as LLMTransport);
 		const longPara = Array.from({ length: 200 }, (_, i) => `word${i}`).join(' '); // ~1100 chars
 		const chunks = pipeline.chunkText(longPara, 8); // 32-char cap
 		expect(chunks.length).toBeGreaterThan(1);

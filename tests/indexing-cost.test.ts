@@ -5,6 +5,7 @@ import { VectorStore, VectorChunk } from '../src/vectorStore';
 import { EmbeddingPipeline } from '../src/embeddings';
 import { RelationExtractor } from '../src/relations';
 import { TransientApiError } from '../src/llmService';
+import { LLMTransport } from '../src/llm/transport';
 import { DEFAULT_SETTINGS, PluginSettings } from '../src/types';
 import { LexicalIndex } from '../src/search/lexicalIndex';
 import { HybridRetriever } from '../src/search/hybridRetriever';
@@ -178,7 +179,7 @@ async function makeWorld(
 
 	plugin.relationExtractor = new RelationExtractor(plugin);
 
-	const embeddingPipeline = new EmbeddingPipeline(plugin.settings);
+	const embeddingPipeline = new EmbeddingPipeline({} as LLMTransport);
 	(embeddingPipeline as any).embed = async (text: string) => {
 		counters.embed++;
 		return fakeEmbed(text);
@@ -268,9 +269,11 @@ describe('startup re-index cost', () => {
 	it('REGRESSION: a file whose embedding failed transiently must not be re-parsed, re-embedded and re-sent to the LLM on every subsequent startup', async () => {
 		const specs = { 'a.md': para('alpha'), 'b.md': para('beta') };
 		const w1 = await makeWorld(specs);
-		// b.md's first embed attempt fails (e.g. Ollama busy / network blip during
-		// the startup burst) — embeddings.ts throws a plain Error, which the
-		// indexer treats as a permanent failure and marks the file with 0 chunks.
+		// b.md's first embed attempts fail. RestTransport.embed now throws the
+		// classified TransientApiError (auto-retried by runWithRetry); here we
+		// mock an *unclassified* plain Error, which the indexer must treat as a
+		// permanent failure and mark the file with 0 chunks (never poisoned to
+		// re-run on boot).
 		let bEmbedAttempts = 0;
 		const realEmbed = (w1 as any).indexer.plugin.embeddingPipeline.embed;
 		(w1 as any).indexer.plugin.embeddingPipeline.embed = async (text: string) => {

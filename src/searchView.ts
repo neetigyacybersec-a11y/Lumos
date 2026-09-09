@@ -1,5 +1,4 @@
 import { Logger } from './logger';
-import { createTransport } from './llm/transport';
 import { ItemView, WorkspaceLeaf, requestUrl, MarkdownRenderer, TFile, MarkdownView } from 'obsidian';
 import LumosPlugin from './main';
 
@@ -326,6 +325,6 @@ ${contextText}`;
             messages.push({ role: msg.role === 'user' ? 'user' : 'assistant', content: msg.content });
         }
 
-        return createTransport(this.plugin.settings).chatStream(messages, onChunk);
+        return this.plugin.llmService.chatStream(messages, onChunk);
     }
 }
