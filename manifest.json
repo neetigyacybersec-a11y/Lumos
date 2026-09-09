@@ -3,8 +3,8 @@
   "name": "Lumos",
   "version": "1.0.0",
   "minAppVersion": "1.4.0",
-  "description": "An intelligent Obsidian plugin to illuminate connections between your notes.",
+  "description": "Illuminates the connections between your notes with automatic semantic linking.",
   "author": "Neetigya Maurya",
-  "authorUrl": "",
+  "authorUrl": "https://github.com/neetigyacybersec-a11y",
   "isDesktopOnly": false
 }
