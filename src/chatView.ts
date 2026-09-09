@@ -1,14 +1,12 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, Notice, setIcon } from 'obsidian';
 import LumosPlugin from './main';
 import { ChatLogic } from './chatLogic';
-import { ChatMessage } from './llmService';
 
 export const CHAT_VIEW_TYPE = 'relation-chat-view';
 
 export class ChatView extends ItemView {
     plugin: LumosPlugin;
     chatLogic: ChatLogic;
-    history: ChatMessage[] = [];
     
     messagesEl: HTMLElement;
     inputEl: HTMLTextAreaElement;
@@ -101,9 +99,8 @@ export class ChatView extends ItemView {
 
         this.inputEl.value = '';
         
-        // Append user message to UI and history
+        // Append user message to UI
         await this.appendMessage('user', text);
-        this.history.push({ role: 'user', content: text });
 
         // Analyze chat message for profile insights in the background
         this.plugin.userProfileManager.analyzeChatMessage(text);
@@ -117,14 +114,13 @@ export class ChatView extends ItemView {
             if (this.isFocusMode) {
                 focusFile = this.plugin.app.workspace.getActiveFile();
             }
-            const responseText = await this.chatLogic.generateResponse(text, this.history, focusFile);
+            const responseText = await this.chatLogic.generateResponse(text, focusFile);
             
             // Remove typing indicator
             this.removeMessage(typingId);
             
-            // Append assistant message to UI and history
+            // Append assistant message to UI
             await this.appendMessage('assistant', responseText);
-            this.history.push({ role: 'assistant', content: responseText });
 
         } catch (e) {
             this.removeMessage(typingId);

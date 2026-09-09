@@ -108,6 +108,21 @@ export interface RelationExtractorHost {
     llmService: { callLLM(messages: { role: string; content: string }[], expectJson?: boolean): Promise<string> };
 }
 
+export interface ChatPort {
+    app: {
+        vault: {
+            read(file: TFile): Promise<string>;
+            getAbstractFileByPath(path: string): any;
+        };
+    };
+    settings: { userProfilePath: string };
+    llmService: { callLLM(messages: { role: string; content: string }[], expectJson?: boolean): Promise<string> };
+    hybridRetriever: {
+        retrieve(opts: { query: string; topK: number }): Promise<{ filePath: string; text: string }[]>;
+    };
+    activityLog: string[];
+}
+
 export interface ProfileHost {
     app: AppLike;
     settings: Pick<PluginSettings, 'enableUserProfile' | 'userProfilePath' | 'userProfileWordThreshold'>;

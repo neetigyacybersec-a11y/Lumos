@@ -1,17 +1,17 @@
 import { Logger } from './logger';
 import { TFile } from 'obsidian';
-import LumosPlugin from './main';
+import { ChatPort } from './ports';
 import { ChatMessage } from './llmService';
 
 export class ChatLogic {
-    private isProcessing = false;
-    plugin: LumosPlugin;
+    private history: ChatMessage[] = [];
+    private plugin: ChatPort;
 
-    constructor(plugin: LumosPlugin) {
+    constructor(plugin: ChatPort) {
         this.plugin = plugin;
     }
 
-    async generateResponse(query: string, history: ChatMessage[], focusFile: TFile | null = null): Promise<string> {
+    async generateResponse(query: string, focusFile: TFile | null = null): Promise<string> {
         try {
             // 1. Smart RAG: Determine if search is needed, or use focusFile
             let retrievedContext = '';
@@ -27,7 +27,7 @@ export class ChatLogic {
                 try {
                     const searchDeciderPrompt: ChatMessage[] = [
                         { role: 'system', content: 'You are an internal routing AI. You must be EXTREMELY AGGRESSIVE about searching the user\'s vault. Unless the user is explicitly saying a generic greeting (like "hello") or a one-word acknowledgment (like "ok"), you MUST output a search query. Output a concise search query (1-5 words) to find related notes. ONLY output exactly "NO_SEARCH" if a search would be completely nonsensical. Only output the query or "NO_SEARCH". Do not explain.' },
-                        ...history,
+                        ...this.history,
                         { role: 'user', content: query }
                     ];
                     
@@ -102,12 +102,16 @@ Disclaimer: If the user expresses intent to harm themselves or others, drop the 
             // 4. Construct final messages payload
             const messages: ChatMessage[] = [
                 { role: 'system', content: systemPrompt },
-                ...history,
+                ...this.history,
                 { role: 'user', content: query }
             ];
 
             // 5. API Call
             const resultText = await this.plugin.llmService.callLLM(messages);
+
+            // 6. Record the exchange into the owned conversation history
+            this.history.push({ role: 'user', content: query });
+            this.history.push({ role: 'assistant', content: resultText });
 
             return resultText;
         } catch (error) {
