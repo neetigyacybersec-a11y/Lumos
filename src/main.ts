@@ -26,6 +26,7 @@ import { HybridRetriever } from './search/hybridRetriever';
 import { Reranker, createBlobWorkerBackend, type RerankerProgress } from './search/reranker';
 import { WORKER_SCRIPT } from './search/workerScript';
 import { RagAnswerer } from './ragAnswer';
+import { beautifyNote, BeautifyHost } from './beautify';
 
 export default class LumosPlugin extends Plugin {
 	settings: PluginSettings;
@@ -195,7 +196,25 @@ export default class LumosPlugin extends Plugin {
 
 				new Notice('Beautifying page...');
 				try {
-					const beautifiedText = await this.llmService.beautifyText(text);
+					const host: BeautifyHost = {
+						resolveEmbed: (linkPath, sourcePath) =>
+							this.app.metadataCache.getFirstLinkpathDest(linkPath, sourcePath),
+						transcribeImage: (file) => this.visionExtractor.extractImageText(file as TFile),
+						retrieveRelated: (query, topK, excludeFilePath) =>
+							this.hybridRetriever
+								.retrieve({ query, topK, excludeFilePath })
+								.then(results => results.map(r => ({ filePath: r.filePath, text: r.text }))),
+						beautifyViaLLM: (payload, opts) =>
+							this.llmService.beautifyText(payload, {
+								relatedNotes: opts.relatedNotes,
+								imageCaptions: opts.imageCaptions,
+							}),
+					};
+					const beautifiedText = await beautifyNote(text, view.file.path, host, {
+						relatedNotes: this.settings.beautifyAddRelatedNotes,
+						imageCaptions: this.settings.beautifyAddImageCaptions,
+						relatedTopK: this.settings.beautifyRelatedTopK,
+					});
 					if (beautifiedText && beautifiedText.trim()) {
 						editor.setValue(beautifiedText);
 						new Notice('Page beautified!');

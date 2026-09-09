@@ -22,6 +22,9 @@ export interface PluginSettings {
 	rerankerModel: 'off' | 'tiny' | 'mini';
 	rerankCandidates: number;
 	requestTimeoutSec: number;
+	beautifyAddRelatedNotes: boolean;
+	beautifyAddImageCaptions: boolean;
+	beautifyRelatedTopK: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -45,6 +48,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	rerankerModel: 'off',
 	rerankCandidates: 20,
 	requestTimeoutSec: 60,
+	beautifyAddRelatedNotes: true,
+	beautifyAddImageCaptions: true,
+	beautifyRelatedTopK: 5,
 }
 
 export interface ParsedNote {

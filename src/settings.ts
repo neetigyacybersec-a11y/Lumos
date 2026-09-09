@@ -130,6 +130,43 @@ export class RelationSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		containerEl.createEl('h3', {text: 'Page Beautify', cls: 'setting-item-heading'});
+
+		new Setting(containerEl)
+			.setName('Add Related Notes Section')
+			.setDesc('During Beautify Page, link the page to its most similar vault notes in a "Related Notes" section using native wiki links.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.beautifyAddRelatedNotes)
+				.onChange(async (value) => {
+					this.plugin.settings.beautifyAddRelatedNotes = value;
+					await this.plugin.saveSettings();
+					this.display();
+				}));
+
+		if (this.plugin.settings.beautifyAddRelatedNotes) {
+			new Setting(containerEl)
+				.setName('How Many Related Notes')
+				.setDesc('Maximum number of similar notes considered when building the section.')
+				.addSlider(slider => slider
+					.setLimits(1, 10, 1)
+					.setValue(this.plugin.settings.beautifyRelatedTopK)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.beautifyRelatedTopK = value;
+						await this.plugin.saveSettings();
+					}));
+		}
+
+		new Setting(containerEl)
+			.setName('Caption Embedded Images')
+			.setDesc('Use the vision model to read text from images embedded in the page (up to 5, one vision call each) and add a caption under each matching embed.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.beautifyAddImageCaptions)
+				.onChange(async (value) => {
+					this.plugin.settings.beautifyAddImageCaptions = value;
+					await this.plugin.saveSettings();
+				}));
+
 		containerEl.createEl('h3', {text: 'AI User Profile', cls: 'setting-item-heading'});
 
 		new Setting(containerEl)

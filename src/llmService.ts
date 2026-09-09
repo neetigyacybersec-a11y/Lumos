@@ -24,18 +24,48 @@ export class LLMService {
         return this.transport.chatStream(messages, onChunk);
     }
 
-    async beautifyText(text: string): Promise<string> {
-        const systemPrompt = `You are an elite copyeditor and Markdown formatting expert.
-Your task is to take the user's raw text and HEAVILY BEAUTIFY it.
+    async beautifyText(text: string, opts?: { relatedNotes?: boolean; imageCaptions?: boolean }): Promise<string> {
+        const relatedRule = opts?.relatedNotes
+            ? `RELATED TOPICS: The === RELATED NOTE CANDIDATES === section in the user message lists vault notes similar to this page. You MAY add a "## Related Notes" section at the very end: one bullet per link ("- [[Name]] - one-line reason"). Rules: ONLY names exactly as listed; NEVER invent or guess a link target; NEVER relink a note that already appears in the page or in its frontmatter.`
+            : `RELATED TOPICS: Do NOT add a "Related Notes" section and do NOT introduce any new wiki links ([[...]]) for related notes. Only keep links the user already wrote.`;
+        const imageRule = opts?.imageCaptions
+            ? `IMAGE CAPTIONS: The === EMBEDDED IMAGE TRANSCRIPTIONS === section provides extracted text for some embedded images. For each image with a transcription, you MAY add, directly under its embed line (e.g. ![[photo.png]]), an indented italic line "> *Caption text.*" describing that image using ONLY the transcription. NEVER change the embed line itself, NEVER remove or replace an image, and NEVER add a caption for an image without a transcription.`
+            : `IMAGE CAPTIONS: Do NOT add captions to images and do not modify any existing image embed lines.`;
 
-RULES:
-1. Fix all grammatical errors, typos, and awkward phrasing.
-2. Format the text to make it stand out and be highly scannable. Use Markdown features aggressively: bolding, italics, bullet points, headers, and Obsidian callouts (e.g., > [!info], > [!summary], > [!important]).
-3. INTERACTIVE ELEMENTS: Identify action items, open questions, or pending tasks and convert them into interactive Markdown checkboxes (- [ ]).
-4. STRUCTURED DATA: Identify lists of attributes, comparisons, or structured data and format them into Markdown tables.
-5. DO NOT summarize, delete, or change the underlying factual meaning or context of the text. The core information must remain 100% intact.
-6. DO NOT add any new content, ideas, paragraphs, or external information. Your job is ONLY to format and copy-edit the exact text provided by the user.
-7. Output ONLY the formatted text. No conversational filler like "Here is your formatted text."`;
+        const systemPrompt = `You are an elite copyeditor and Markdown formatting expert for an Obsidian vault.
+The user message contains a document wrapped in === NOTE CONTENT TO BEAUTIFY ===...================================, followed by INFORMATION-ONLY sections (=== EMBEDDED IMAGE TRANSCRIPTIONS === and === RELATED NOTE CANDIDATES ===) that describe supporting material. Beautify ONLY the NOTE CONTENT block. The support sections and all === markers MUST NOT appear in your output.
+
+PRESERVATION CONTRACT:
+1. Fix grammatical errors, typos, and awkward phrasing.
+2. Do NOT summarize, delete, merge, or reorder information, and never change factual meaning.
+3. Do NOT invent facts, names, figures, or ideas. Spelling corrections of clearly-typoed words are allowed.
+4. Preserve the note's frontmatter, existing wiki links, tags, callouts, and embeds verbatim; beautify the prose around them, never their syntax.
+
+OBSIDIAN DEFAULT MARKDOWN - prefer these native features everywhere they fit:
+- Callouts: > [!note] / [!summary] / [!info] / [!tip] / [!success] / [!question] / [!warning] / [!failure] / [!danger] / [!example] / [!quote], each followed by an optional bold title on the same line. Collapsible versions use > [!type]+ (start open) or > [!type]- (start closed).
+- Interactive tasks: "- [ ] pending" and "- [x] done", with two-space indented subtasks for breakdowns.
+- Tables (with alignment) for attribute lists, comparisons, schedules, and any structured data.
+- ==highlights== around the single most important term in a sentence.
+- Wiki links [[Note Name]] only per the RELATED TOPICS rule below.
+- Footnotes [^1] with their definitions collected at the very end, for citations and asides that would otherwise break the flow.
+- HTML comments <!-- ... --> to leave reviewer notes, status flags, or rationale that a human reviewer should see without rendering on the page.
+- Headings h2/h3 for structure; do not create an h1 (Obsidian already shows the file title). Never auto-number headings.
+
+REVIEWABILITY RULES:
+- Open with a one-line > [!summary] callout stating what this page is about.
+- Keep all headings parallel in phrasing, a consistent hierarchy, and one section per distinct idea.
+- Convert attribute/comparison lists into tables, and every action item, open question, or deferred decision into "- [ ]" tasks.
+- Group pending tasks under a "## Tasks" heading near the END of the page, inside a single collapsible > [!todo]+ callout.
+- For pages of 80+ lines, add a "> [!note]+ On This Page" callout immediately after the summary listing its h2 sections.
+- Keep paragraphs to at most 3 short sentences; prefer bold/italic over ALL CAPS.
+
+${relatedRule}
+
+${imageRule}
+
+OUTPUT CONTRACT:
+- Output ONLY the beautified note. No preamble, no "Here is...", no commentary, no extra sections beyond the two permitted augmentations above.
+- The output must contain 100% of the information from the NOTE CONTENT block and none of the support material.`;
 
         const messages: ChatMessage[] = [
             { role: 'system', content: systemPrompt },
