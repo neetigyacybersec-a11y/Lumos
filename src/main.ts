@@ -12,7 +12,7 @@ import { RelationExtractor } from './relations';
 import { RelationSidebarView, RELATION_VIEW_TYPE } from './sidebarView';
 import { BackgroundIndexer } from './indexer';
 import { BacklinkManager } from './backlinker';
-import { hashString, isPathIgnored } from './utils';
+import { isPathIgnored } from './utils';
 import { ScoringEngine } from './scoring';
 import { VisionExtractor } from './vision';
 import { LocalOcr } from './localOcr';
@@ -22,7 +22,8 @@ import { ChatView, CHAT_VIEW_TYPE } from './chatView';
 import { LLMService } from './llmService';
 import { LexicalIndex } from './search/lexicalIndex';
 import { HybridRetriever } from './search/hybridRetriever';
-import { Reranker, createBlobWorkerBackend } from './search/reranker';
+import { Reranker, createBlobWorkerBackend, type RerankerProgress } from './search/reranker';
+import { WORKER_SCRIPT } from './search/workerScript';
 
 export default class LumosPlugin extends Plugin {
 	settings: PluginSettings;
@@ -43,6 +44,7 @@ export default class LumosPlugin extends Plugin {
 	hybridRetriever: HybridRetriever;
 
 	public activityLog: string[] = [];
+	private rerankerStatusEl: HTMLElement | null = null;
 
 	logActivity(message: string) {
 		const timestamp = new Date().toLocaleTimeString();
@@ -50,11 +52,43 @@ export default class LumosPlugin extends Plugin {
 		if (this.activityLog.length > 50) this.activityLog.pop();
 	}
 
+	/** Renders local-reranker model download/load progress on the status bar. */
+	private renderRerankerProgress(p: RerankerProgress) {
+		const el = this.rerankerStatusEl;
+		if (!el) return;
+		const file = p.file ? p.file.split('/').pop() : '';
+		if (p.status === 'ready') {
+			el.setText('Lumos: reranker ready');
+			el.show();
+			setTimeout(() => el.hide(), 2500);
+			return;
+		}
+		if (p.status === 'progress' || p.status === 'progress_total') {
+			const pct = typeof p.percent === 'number' ? Math.round(p.percent) : 0;
+			el.setText(file ? `Lumos: reranker ${pct}% (${file})` : `Lumos: reranker ${pct}%`);
+			el.show();
+			return;
+		}
+		if (p.status === 'download') {
+			el.setText(file ? `Lumos: downloading reranker (${file})` : 'Lumos: downloading reranker...');
+			el.show();
+		} else if (p.status === 'done') {
+			el.setText('Lumos: reranker model ready');
+			el.show();
+		}
+	}
+
 	async onload() {
 		Logger.init(this);
 		Logger.info('lumos loaded');
 		await this.loadSettings();
 		this.addSettingTab(new RelationSettingTab(this.app, this));
+
+		// Persistent status surface for long-running background work (e.g. the
+		// local reranker model download), hidden until there is something to show.
+		this.rerankerStatusEl = this.addStatusBarItem();
+		this.rerankerStatusEl.setText('');
+		this.rerankerStatusEl.hide();
 
 		this.registerView(
 			RELATION_VIEW_TYPE,
@@ -351,18 +385,32 @@ export default class LumosPlugin extends Plugin {
 				const dir = this.manifest?.dir || '';
 				// Worker construction is cross-origin-blocked for app:// resource
 				// URLs; spawn from a same-origin blob of the script text instead.
-				const script = await this.app.vault.adapter.read(`${dir}/reranker.worker.js`);
-				return createBlobWorkerBackend(script);
+				//
+				// Prefer the on-disk worker (kept fresh by `npm run dev` for local
+				// development), then fall back to the copy inlined into main.js by
+				// esbuild — the community installer ships only main.js, so the
+				// worker source must travel inside it.
+				let script: string | undefined;
+				try {
+					script = await this.app.vault.adapter.read(`${dir}/reranker.worker.js`);
+				} catch {
+					script = undefined;
+				}
+				return createBlobWorkerBackend(script ?? WORKER_SCRIPT);
 			} catch (e) {
 				Logger.warn('[Lumos] Reranker worker unavailable:', e);
 				return null;
 			}
 		}, false, () => {
+			this.rerankerStatusEl?.hide();
 			new Notice('Lumos: local reranker unavailable this session — using rank fusion only.', 8000);
 		}, (modelId) => {
 			new Notice('Lumos: downloading local reranker model (one-time)...', 10000);
 			Logger.info(`[Lumos] Downloading reranker model ${modelId}`);
 		});
+		reranker.onProgress = (p) => {
+			this.renderRerankerProgress(p);
+		};
 		this.hybridRetriever = new HybridRetriever(this, this.lexicalIndex, reranker);
 
 		this.embeddingPipeline = new EmbeddingPipeline(this.settings);
