@@ -10,12 +10,15 @@ describe('Watcher', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		mockApp = {
-			vault: {
-				on: vi.fn().mockImplementation((event, callback) => {
-					return { event, callback }; // mock event ref
-				}),
-				offref: vi.fn()
-			}
+			app: {
+				vault: {
+					on: vi.fn().mockImplementation((event, callback) => {
+						return { event, callback };
+					}),
+					offref: vi.fn()
+				}
+			},
+			logActivity: vi.fn()
 		};
 		watcher = new Watcher(mockApp);
 	});
@@ -51,7 +54,7 @@ describe('Watcher', () => {
 		watcher.register();
 
 		// Find the delete handler
-		const deleteHandlerCall = mockApp.vault.on.mock.calls.find((c: any) => c[0] === 'delete');
+		const deleteHandlerCall = mockApp.app.vault.on.mock.calls.find((c: any) => c[0] === 'delete');
 		const deleteHandler = deleteHandlerCall[1];
 
 		const file = new TFile();
