@@ -34,6 +34,13 @@ export class VectorStore {
     public indexedFiles: Set<string> = new Set();
     private db: IDBDatabase | null = null;
     /**
+     * The embedding dimension the current model produces, learned from the
+     * first embedded chunk of a run. Used to detect stale vectors left over
+     * from a different embedding model so they get re-embedded instead of
+     * reused (#incremental-edit).
+     */
+    private learnedDimension: number | undefined = undefined;
+    /**
      * Set when the persisted index could not be read (IndexedDB open/read
      * failure). Consumers must NOT treat this as "empty vault" and rehash;
      * they should tell the user the index is unavailable instead.
@@ -231,6 +238,16 @@ export class VectorStore {
 
     getFileCount(): number {
         return this.indexedFiles.size;
+    }
+
+    /** The embedding dimension of the current model, if it has been learned. */
+    get dimension(): number | undefined {
+        return this.learnedDimension;
+    }
+
+    /** Record the model's embedding dimension (the first learned value wins). */
+    recordDimension(dim: number) {
+        if (this.learnedDimension === undefined) this.learnedDimension = dim;
     }
 
     getFileHash(filePath: string): string | undefined {

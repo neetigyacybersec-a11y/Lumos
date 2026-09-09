@@ -25,8 +25,6 @@ export class BackgroundIndexer {
     failureCooldownMs: number = 10 * 60 * 1000;
     private lastFailureAt: Map<string, number> = new Map();
     private halted: boolean = false;
-    /** Current model's embedding dimension, learned from the first embed of a run. */
-    private embedDim: number | undefined = undefined;
     private flow: IndexFileFlow;
 
     constructor(plugin: IndexerHost) {
@@ -284,8 +282,7 @@ export class BackgroundIndexer {
     }
 
     private async indexFileAttempt(file: TFile): Promise<boolean> {
-        const { madeNetworkCall, embedDim } = await this.flow.index(new VaultFileInput(this.plugin, file), this.embedDim);
-        this.embedDim = embedDim;
+        const { madeNetworkCall } = await this.flow.index(new VaultFileInput(this.plugin, file));
         return madeNetworkCall;
     }
 
@@ -307,8 +304,7 @@ export class BackgroundIndexer {
 
             try {
                 await this.runWithRetry(async () => {
-                    const { embedDim } = await this.flow.index(new CalendarInput(event), this.embedDim);
-                    this.embedDim = embedDim;
+                    await this.flow.index(new CalendarInput(event));
                 });
                 processedCount++;
 

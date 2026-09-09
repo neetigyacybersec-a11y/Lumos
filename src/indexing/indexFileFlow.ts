@@ -12,6 +12,10 @@ export interface IndexFileHost {
         getChunks(filePath: string): { chunkHash?: string; embedding: number[] }[];
         upsert(filePath: string, chunks: any[]): Promise<void>;
         getFileCount(): number;
+        /** The current model's embedding dimension, or undefined until learned. */
+        dimension: number | undefined;
+        /** Learn the model's embedding dimension from a fresh embedding. */
+        recordDimension(dim: number): void;
     };
     embeddingPipeline: {
         chunkText(text: string): string[];
@@ -67,8 +71,6 @@ export interface IndexInput {
 
 export interface IndexFileResult {
     madeNetworkCall: boolean;
-    /** The document learned the model's embedding dim on its first embed. */
-    embedDim: number | undefined;
 }
 
 const SIMILAR_TOP_K = 3;
@@ -83,24 +85,24 @@ const LEXICAL_QUERY_MAX = 4000;
 export class IndexFileFlow {
     constructor(private readonly host: IndexFileHost) {}
 
-    async index(input: IndexInput, embedDim: number | undefined = undefined): Promise<IndexFileResult> {
+    async index(input: IndexInput): Promise<IndexFileResult> {
         let madeNetworkCall = false;
 
         const extracted = await input.extractText();
         madeNetworkCall = madeNetworkCall || extracted.madeNetworkCall;
         if (extracted.absent) {
-            return { madeNetworkCall, embedDim };
+            return { madeNetworkCall };
         }
         if (!extracted.text || extracted.text.trim() === '') {
             // Mark as indexed with 0 chunks so we don't process it on every startup.
             await this.host.vectorStore.upsert(input.path, []);
-            return { madeNetworkCall, embedDim };
+            return { madeNetworkCall };
         }
         const text = extracted.text;
 
         const contentHash = await hashString(text);
         if (this.host.vectorStore.getFileHash(input.path) === contentHash) {
-            return { madeNetworkCall, embedDim };
+            return { madeNetworkCall };
         }
 
         // Embed only new/changed chunks; reuse stored vectors for chunks
@@ -110,9 +112,9 @@ export class IndexFileFlow {
         const chunks = this.host.embeddingPipeline.chunkText(text);
         const plan = await planChunkEmbeddings(input.path, chunks, previousChunks, contentHash, async (chunkText) => {
             const vec = await this.host.embeddingPipeline.embed(chunkText);
-            if (embedDim === undefined) embedDim = vec.length;
+            this.host.vectorStore.recordDimension(vec.length);
             return vec;
-        }, embedDim);
+        }, this.host.vectorStore.dimension);
         if (plan.changedChunkTexts.length > 0) madeNetworkCall = true;
 
         const firstEmbedding: number[] | null = plan.vectorChunks.length > 0 ? plan.vectorChunks[0].embedding : null;
@@ -155,6 +157,6 @@ export class IndexFileFlow {
             await input.onNoRelations(text, false);
         }
 
-        return { madeNetworkCall, embedDim };
+        return { madeNetworkCall };
     }
 }

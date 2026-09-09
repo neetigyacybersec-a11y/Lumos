@@ -12,6 +12,8 @@ function makeHost(overrides: Partial<IndexFileHost> = {}): IndexFileHost {
             getChunks: vi.fn(() => []),
             upsert: vi.fn(async () => {}),
             getFileCount: vi.fn(() => 5),
+            dimension: undefined as number | undefined,
+            recordDimension: vi.fn(),
         },
         embeddingPipeline: {
             chunkText: vi.fn((text: string) => (text ? [text] : [])),
@@ -54,7 +56,7 @@ describe('IndexFileFlow', () => {
         const input = makeInput();
         const flow = new IndexFileFlow(host);
 
-        const res = await flow.index(input, undefined);
+        const res = await flow.index(input);
 
         expect(host.vectorStore.upsert).toHaveBeenCalledWith('a.md', [expect.objectContaining({ text: 'the quick brown fox' })]);
         expect(host.hybridRetriever.retrieve).toHaveBeenCalledWith(expect.objectContaining({
@@ -68,7 +70,7 @@ describe('IndexFileFlow', () => {
             null
         );
         expect(res.madeNetworkCall).toBe(true);
-        expect(res.embedDim).toBe(2);
+        expect(host.vectorStore.recordDimension).toHaveBeenCalledWith(2);
     });
 
     it('persists an empty marker for blank text and short-circuits everything', async () => {
@@ -119,7 +121,7 @@ describe('IndexFileFlow', () => {
         host.embeddingPipeline.embed = vi.fn(async () => [3, 4]);
 
         const input = makeInput();
-        await new IndexFileFlow(host).index(input, 2);
+        await new IndexFileFlow(host).index(input);
 
         // Only the genuinely changed chunk hits the embed function.
         expect(host.embeddingPipeline.embed).toHaveBeenCalledTimes(1);
@@ -133,6 +135,23 @@ describe('IndexFileFlow', () => {
             'a.md',
             expect.arrayContaining([expect.objectContaining({ text: unchangedText, embedding: [1, 2] })])
         );
+    });
+
+    it('re-embeds stored vectors whose dimension differs from the current model', async () => {
+        const unchangedText = 'first chunk unchanged';
+        const unchangedHash = await hashString(unchangedText);
+        const host = makeHost();
+        // The store knows the current model produces 3-dim vectors.
+        host.vectorStore.dimension = 3;
+        host.vectorStore.getChunks = vi.fn(() => [{ chunkHash: unchangedHash, embedding: [1, 2] }]);
+        host.embeddingPipeline.chunkText = vi.fn(() => [unchangedText]);
+        host.embeddingPipeline.embed = vi.fn(async () => [1, 2, 3]);
+
+        await new IndexFileFlow(host).index(makeInput());
+
+        // Matching text but wrong dimension ⇒ not reusable, re-embedded.
+        expect(host.embeddingPipeline.embed).toHaveBeenCalledTimes(1);
+        expect(host.vectorStore.recordDimension).toHaveBeenCalledWith(3);
     });
 
     it('reports hadAnchor=true when similar candidates are empty', async () => {
