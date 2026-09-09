@@ -21,7 +21,7 @@ import { SEARCH_VIEW_TYPE, SemanticSearchView } from './searchView';
 import { UserProfileManager } from './userProfile';
 import { ChatView, CHAT_VIEW_TYPE } from './chatView';
 import { LLMService } from './llmService';
-import { LexicalIndex } from './search/lexicalIndex';
+import { MirroredIndex } from './search/mirroredIndex';
 import { HybridRetriever } from './search/hybridRetriever';
 import { Reranker, createBlobWorkerBackend, type RerankerProgress } from './search/reranker';
 import { WORKER_SCRIPT } from './search/workerScript';
@@ -42,7 +42,7 @@ export default class LumosPlugin extends Plugin {
 	userProfileManager: UserProfileManager;
 	llmService: LLMService;
 	llmTransport: LLMTransport;
-	lexicalIndex: LexicalIndex;
+	lexicalIndex: MirroredIndex;
 	hybridRetriever: HybridRetriever;
 
 	public activityLog: string[] = [];
@@ -352,21 +352,8 @@ export default class LumosPlugin extends Plugin {
 
 		// Hybrid retrieval: BM25 index mirrors the vector corpus, RRF fusion,
 		// optional local cross-encoder rerank (runs off the UI thread).
-		this.lexicalIndex = new LexicalIndex();
-		this.lexicalIndex.rebuild(
-			this.vectorStore.vectors.filter((v) => v.embedding.length > 0)
-		);
-		this.vectorStore.onMutation = (op, filePath, oldPath, chunks) => {
-			if (op === 'upsert' && filePath && chunks) {
-				this.lexicalIndex.upsert(filePath, chunks.filter((c) => c.embedding.length > 0));
-			} else if (op === 'delete' && filePath) {
-				this.lexicalIndex.delete(filePath);
-			} else if (op === 'rename' && filePath && oldPath) {
-				this.lexicalIndex.renameFile(oldPath, filePath);
-			} else if (op === 'clear') {
-				this.lexicalIndex.clear();
-			}
-		};
+		this.lexicalIndex = new MirroredIndex();
+		this.lexicalIndex.attach(this.vectorStore);
 		const reranker = new Reranker(async () => {
 			try {
 				const dir = this.manifest?.dir || '';
@@ -398,7 +385,7 @@ export default class LumosPlugin extends Plugin {
 		reranker.onProgress = (p) => {
 			this.renderRerankerProgress(p);
 		};
-		this.hybridRetriever = new HybridRetriever(this, this.lexicalIndex, reranker);
+		this.hybridRetriever = new HybridRetriever(this, this.lexicalIndex.lexical, reranker);
 
 		this.embeddingPipeline = new EmbeddingPipeline(this.llmTransport);
 		this.relationStore = new RelationStore(this);

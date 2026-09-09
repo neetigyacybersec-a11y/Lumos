@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TFile } from 'obsidian';
 import { VectorStore } from '../src/vectorStore';
 import { LexicalIndex } from '../src/search/lexicalIndex';
+import { MirroredIndex } from '../src/search/mirroredIndex';
 import { HybridRetriever, rrfFuse } from '../src/search/hybridRetriever';
 import { Reranker, RerankBackend } from '../src/search/reranker';
 
@@ -44,18 +45,9 @@ async function makeWorld(settings?: Record<string, any>): Promise<World> {
 	const vectorStore = new VectorStore(plugin);
 	plugin.vectorStore = vectorStore;
 
-	const lexical = new LexicalIndex();
-	vectorStore.onMutation = (op, filePath, oldPath, chunks) => {
-		if (op === 'upsert' && filePath && chunks) {
-			lexical.upsert(filePath, chunks.filter((c) => c.embedding.length > 0));
-		} else if (op === 'delete' && filePath) {
-			lexical.delete(filePath);
-		} else if (op === 'rename' && filePath && oldPath) {
-			lexical.renameFile(oldPath, filePath);
-		} else if (op === 'clear') {
-			lexical.clear();
-		}
-	};
+	const mirrored = new MirroredIndex();
+	mirrored.attach(vectorStore);
+	const lexical = mirrored.lexical;
 	const reranker = new Reranker(() => backend);
 	const retriever = new HybridRetriever(plugin, lexical, reranker);
 

@@ -7,7 +7,7 @@ import { RelationExtractor } from '../src/relations';
 import { TransientApiError } from '../src/llmService';
 import { LLMTransport } from '../src/llm/transport';
 import { DEFAULT_SETTINGS, PluginSettings } from '../src/types';
-import { LexicalIndex } from '../src/search/lexicalIndex';
+import { MirroredIndex } from '../src/search/mirroredIndex';
 import { HybridRetriever } from '../src/search/hybridRetriever';
 import { Reranker } from '../src/search/reranker';
 
@@ -191,19 +191,9 @@ async function makeWorld(
 	await vectorStore.load();
 	plugin.vectorStore = vectorStore;
 
-	const lexical = new LexicalIndex();
-	vectorStore.onMutation = (op, filePath, oldPath, chunks) => {
-		if (op === 'upsert' && filePath && chunks) {
-			lexical.upsert(filePath, chunks.filter((c) => c.embedding.length > 0));
-		} else if (op === 'delete' && filePath) {
-			lexical.delete(filePath);
-		} else if (op === 'rename' && filePath && oldPath) {
-			lexical.renameFile(oldPath, filePath);
-		} else if (op === 'clear') {
-			lexical.clear();
-		}
-	};
-	plugin.hybridRetriever = new HybridRetriever(plugin, lexical, new Reranker(null));
+	const mirrored = new MirroredIndex();
+	mirrored.attach(vectorStore);
+	plugin.hybridRetriever = new HybridRetriever(plugin, mirrored.lexical, new Reranker(null));
 
 	const indexer = new BackgroundIndexer(plugin);
 	(indexer as any).progressUi = { show() {}, update() {}, hide() {} };

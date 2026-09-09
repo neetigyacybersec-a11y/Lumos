@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { VectorStore } from '../src/vectorStore';
-import { LexicalIndex } from '../src/search/lexicalIndex';
+import { MirroredIndex } from '../src/search/mirroredIndex';
 import { HybridRetriever } from '../src/search/hybridRetriever';
 import { Reranker } from '../src/search/reranker';
 
@@ -96,10 +96,9 @@ describe.skipIf(!RUN)('retrieval quality eval (LUMOS_EVAL=1)', () => {
         const vectorStore = new VectorStore(plugin);
         plugin.vectorStore = vectorStore;
 
-        const lexical = new LexicalIndex();
-        vectorStore.onMutation = (op, filePath, _old, chunks) => {
-            if (op === 'upsert' && filePath && chunks) lexical.upsert(filePath, chunks);
-        };
+        const mirrored = new MirroredIndex();
+        mirrored.attach(vectorStore);
+        const lexical = mirrored.lexical;
 
         for (const f of CORPUS) {
             await vectorStore.upsert(f.path, [
