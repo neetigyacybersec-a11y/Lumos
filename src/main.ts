@@ -25,6 +25,7 @@ import { MirroredIndex } from './search/mirroredIndex';
 import { HybridRetriever } from './search/hybridRetriever';
 import { Reranker, createBlobWorkerBackend, type RerankerProgress } from './search/reranker';
 import { WORKER_SCRIPT } from './search/workerScript';
+import { RagAnswerer } from './ragAnswer';
 
 export default class LumosPlugin extends Plugin {
 	settings: PluginSettings;
@@ -44,6 +45,7 @@ export default class LumosPlugin extends Plugin {
 	llmTransport: LLMTransport;
 	lexicalIndex: MirroredIndex;
 	hybridRetriever: HybridRetriever;
+	ragAnswerer: RagAnswerer;
 
 	public activityLog: string[] = [];
 	private rerankerStatusEl: HTMLElement | null = null;
@@ -386,6 +388,7 @@ export default class LumosPlugin extends Plugin {
 			this.renderRerankerProgress(p);
 		};
 		this.hybridRetriever = new HybridRetriever(this, this.lexicalIndex.lexical, reranker);
+		this.ragAnswerer = new RagAnswerer(this);
 
 		this.embeddingPipeline = new EmbeddingPipeline(this.llmTransport);
 		this.relationStore = new RelationStore(this);

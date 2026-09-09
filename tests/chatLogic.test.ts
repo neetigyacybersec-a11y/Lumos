@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { ChatLogic } from '../src/chatLogic';
 import { ChatPort } from '../src/ports';
 
-function makePort(overrides: Partial<ChatPort> = {}): ChatPort & { llmCalls: any[][]; retrieveCalls: any[] } {
+function makePort(overrides: Partial<ChatPort> = {}): ChatPort & { llmCalls: any[][]; contextCalls: any[] } {
     const llmCalls: any[][] = [];
-    const retrieveCalls: any[] = [];
+    const contextCalls: any[] = [];
     const llmService: any = {
         callLLM: vi.fn(async (messages: any[]) => {
             llmCalls.push(messages);
@@ -12,22 +12,22 @@ function makePort(overrides: Partial<ChatPort> = {}): ChatPort & { llmCalls: any
             return isDecider ? 'nuclear reactor safety' : 'the response';
         }),
     };
-    const hybridRetriever: any = {
-        retrieve: vi.fn(async (opts: any) => {
-            retrieveCalls.push(opts);
-            return [{ filePath: 'safety.md', text: 'Liquid fluoride thorium reactors are intrinsically safe.' }];
+    const ragAnswer: any = {
+        contextFor: vi.fn(async (query: string, topK?: number) => {
+            contextCalls.push({ query, topK });
+            return '[Source: safety.md]\nLiquid fluoride thorium reactors are intrinsically safe.';
         }),
     };
     return {
         app: { vault: { read: vi.fn(async () => 'focused note content'), getAbstractFileByPath: vi.fn(() => null) } },
         settings: { userProfilePath: 'profile.md' },
         llmService,
-        hybridRetriever,
+        ragAnswer,
         activityLog: [],
         ...overrides,
         // keep the spies reachable regardless of overrides
         llmCalls,
-        retrieveCalls,
+        contextCalls,
     };
 }
 
@@ -47,8 +47,8 @@ describe('ChatLogic', () => {
         // Decider call + final generation call
         expect(port.llmCalls).toHaveLength(2);
         // Decider chose to search
-        expect(port.retrieveCalls).toHaveLength(1);
-        expect(port.retrieveCalls[0].query).toBe('thorium safety');
+        expect(port.contextCalls).toHaveLength(1);
+        expect(port.contextCalls[0]).toEqual({ query: 'thorium safety', topK: 3 });
         // The final messages embed the retrieved context
         const final = port.llmCalls[1];
         expect(final.some((m: any) => m.content.includes('safety.md'))).toBe(true);
@@ -70,7 +70,7 @@ describe('ChatLogic', () => {
 
         await chat.generateResponse('hello');
 
-        expect(port.retrieveCalls).toHaveLength(0);
+        expect(port.contextCalls).toHaveLength(0);
         expect(port.llmCalls).toHaveLength(2);
     });
 
@@ -81,7 +81,7 @@ describe('ChatLogic', () => {
         await chat.generateResponse('summarize this', { path: 'note.md' } as any);
 
         expect(port.app.vault.read).toHaveBeenCalledWith({ path: 'note.md' });
-        expect(port.retrieveCalls).toHaveLength(0);
+        expect(port.contextCalls).toHaveLength(0);
         // Only the final generation call happens (no decider), and it carries the focused content
         expect(port.llmCalls).toHaveLength(1);
         const final = port.llmCalls[0];

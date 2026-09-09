@@ -117,9 +117,7 @@ export interface ChatPort {
     };
     settings: { userProfilePath: string };
     llmService: { callLLM(messages: { role: string; content: string }[], expectJson?: boolean): Promise<string> };
-    hybridRetriever: {
-        retrieve(opts: { query: string; topK: number }): Promise<{ filePath: string; text: string }[]>;
-    };
+    ragAnswer: { contextFor(query: string, topK?: number): Promise<string> };
     activityLog: string[];
 }
 

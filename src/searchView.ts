@@ -1,6 +1,7 @@
 import { Logger } from './logger';
 import { ItemView, WorkspaceLeaf, requestUrl, MarkdownRenderer, TFile, MarkdownView } from 'obsidian';
 import LumosPlugin from './main';
+import { formatContext } from './ragAnswer';
 
 export const SEARCH_VIEW_TYPE = 'semantic-search-view';
 
@@ -311,7 +312,7 @@ export class SemanticSearchView extends ItemView {
     }
 
     async generateAnswer(contextChunks: {filePath: string, text: string}[], onChunk: (chunk: string) => void): Promise<string> {
-        const contextText = contextChunks.map(c => `[Source: ${c.filePath}]\n${c.text}`).join('\n\n');
+        const contextText = formatContext(contextChunks);
         const systemPrompt = `You are an AI assistant for a personal knowledge base.
 Using ONLY the provided context from the user's notes, answer the question or explain the concept provided.
 If the user provides a keyword or topic instead of a full question, summarize what the notes say about that topic.
@@ -320,11 +321,8 @@ If the context contains absolutely no relevant information, say "I don't have en
 Context:
 ${contextText}`;
 
-        const messages = [{ role: 'system', content: systemPrompt }];
-        for (const msg of this.chatHistory) {
-            messages.push({ role: msg.role === 'user' ? 'user' : 'assistant', content: msg.content });
-        }
-
-        return this.plugin.llmService.chatStream(messages, onChunk);
+        const history = this.chatHistory.slice(0, -1).map(m => ({ role: m.role === 'user' ? 'user' as const : 'assistant' as const, content: m.content }));
+        const query = this.chatHistory[this.chatHistory.length - 1]?.content ?? '';
+        return this.plugin.ragAnswerer.streamAnswer(systemPrompt, history, query, onChunk);
     }
 }

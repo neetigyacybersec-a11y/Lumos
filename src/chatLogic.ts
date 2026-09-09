@@ -2,6 +2,7 @@ import { Logger } from './logger';
 import { TFile } from 'obsidian';
 import { ChatPort } from './ports';
 import { ChatMessage } from './llmService';
+import { buildMessages } from './ragAnswer';
 
 export class ChatLogic {
     private history: ChatMessage[] = [];
@@ -36,10 +37,10 @@ export class ChatLogic {
                     if (searchDecision && !searchDecision.includes('NO_SEARCH')) {
                         const cleanQuery = searchDecision.replace(/["']/g, '').trim();
                         Logger.info('[ChatLogic] Smart RAG triggering search for:', cleanQuery);
-                        // Hybrid retrieval keeps chat RAG consistent with search.
-                        const similar = await this.plugin.hybridRetriever.retrieve({ query: cleanQuery, topK: 3 });
-                        if (similar.length > 0) {
-                            retrievedContext = similar.map(c => `File: ${c.filePath}\nContent:\n${c.text}`).join('\n\n---\n\n');
+                        // One retrieval policy, shared with searchView.
+                        const context = await this.plugin.ragAnswer.contextFor(cleanQuery, 3);
+                        if (context) {
+                            retrievedContext = context;
                         }
                     } else {
                         Logger.info('[ChatLogic] Smart RAG determined no search needed.');
@@ -100,11 +101,7 @@ Disclaimer: If the user expresses intent to harm themselves or others, drop the 
             }
 
             // 4. Construct final messages payload
-            const messages: ChatMessage[] = [
-                { role: 'system', content: systemPrompt },
-                ...this.history,
-                { role: 'user', content: query }
-            ];
+            const messages: ChatMessage[] = buildMessages(systemPrompt, this.history, query);
 
             // 5. API Call
             const resultText = await this.plugin.llmService.callLLM(messages);
