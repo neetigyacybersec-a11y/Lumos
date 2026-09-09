@@ -281,11 +281,13 @@ describe('startup re-index cost', () => {
 			return realEmbed(text);
 		};
 		await drain(w1.indexer);
-		// b.md was poisoned: marked indexed with zero real chunks (marker row only)
+		// b.md was poisoned: marked indexed with zero real chunks (marker row only).
+		// The per-file #meta row and the marker row both carry empty embeddings.
 		expect(w1.vectorStore.hasFile('b.md')).toBe(true);
 		const bRows = w1.vectorStore.vectors.filter((v) => v.filePath === 'b.md');
-		expect(bRows).toHaveLength(1);
-		expect(bRows[0].embedding).toHaveLength(0);
+		expect(bRows.filter((r) => r.id.endsWith('#meta'))).toHaveLength(1);
+		expect(bRows.filter((r) => !r.id.endsWith('#meta'))).toHaveLength(1);
+		expect(bRows.every((r) => r.embedding.length === 0)).toBe(true);
 
 		// --- restart Obsidian ---
 		const w2 = await makeWorld(specs);

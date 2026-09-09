@@ -80,15 +80,27 @@ export class VectorStore {
         }
     }
 
-    async upsert(filePath: string, chunks: VectorChunk[]) {
-        // Persist a marker row for empty/failed files so they stay "indexed"
-        // across restarts; load() rebuilds indexedFiles from rows only (#startup-reindex).
-        const rows = chunks.length > 0 ? chunks : [{
+    async upsert(filePath: string, chunks: VectorChunk[], indexMeta?: { contentHash?: string }) {
+        // Persist a per-file meta row that carries the authoritative contentHash
+        // (a single deterministic value per file — getFileHash reads only this,
+        // not whatever chunk `find` happens to reach). Plus the vector rows.
+        // For empty/failed files we persist a marker row (embedding []) so they
+        // stay "indexed" across restarts (#startup-reindex).
+        const metaContentHash = indexMeta?.contentHash ?? chunks[0]?.contentHash;
+        const metaRow: VectorChunk = {
+            id: `${filePath}#meta`,
+            filePath,
+            text: '',
+            embedding: [],
+            contentHash: metaContentHash,
+        };
+        const bodyRows = chunks.length > 0 ? chunks : [{
             id: `${filePath}#marker`,
             filePath,
             text: '',
             embedding: [],
         }];
+        const rows = [metaRow, ...bodyRows];
 
         // Update memory
         this.vectors = this.vectors.filter(v => v.filePath !== filePath);
@@ -222,8 +234,8 @@ export class VectorStore {
     }
 
     getFileHash(filePath: string): string | undefined {
-        const chunk = this.vectors.find(v => v.filePath === filePath && v.contentHash !== undefined);
-        return chunk?.contentHash;
+        const meta = this.vectors.find(v => v.id === `${filePath}#meta`);
+        return meta?.contentHash;
     }
 
     async querySimilar(embedding: number[], topK: number = 5, excludeFilePath?: string): Promise<(VectorChunk & { similarity: number })[]> {

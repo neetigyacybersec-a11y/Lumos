@@ -14,7 +14,7 @@ export interface IndexManifest {
  * the index must be rebuilt. This must NOT change just because plugin code
  * changed — a plain version update must reuse the existing index.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const MANIFEST_FILE = 'lumos-index.json';
 

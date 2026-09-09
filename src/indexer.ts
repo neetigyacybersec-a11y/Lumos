@@ -23,6 +23,8 @@ export class BackgroundIndexer {
     failureCooldownMs: number = 10 * 60 * 1000;
     private lastFailureAt: Map<string, number> = new Map();
     private halted: boolean = false;
+    /** Current model's embedding dimension, learned from the first embed of a run. */
+    private embedDim: number | undefined = undefined;
 
     constructor(plugin: IndexerHost) {
         this.plugin = plugin;
@@ -67,10 +69,11 @@ export class BackgroundIndexer {
             return;
         }
 
+        const manifest = await readManifest(this.plugin, this.plugin.app.vault.adapter);
+
         // A different embedding model or schema than the index was built with
         // is a non-blocking signal: inform, but do NOT auto-rehash. The user
-        // runs the manual rebuild command if they want fresh vectors.
-        const manifest = await readManifest(this.plugin, this.plugin.app.vault.adapter);
+        // runs the manual command if they want fresh vectors.
         if (manifestNeedsRebuild(manifest, this.plugin.settings.embeddingModelName)) {
             new Notice('Lumos: your index was built with a different embedding model/schema. Run "Clear Index and Re-scan Vault" to rebuild.', 8000);
         }
@@ -285,7 +288,7 @@ export class BackgroundIndexer {
                     return madeNetworkCall;
                 }
 
-                const contentHash = hashString(cleanText);
+                const contentHash = await hashString(cleanText);
                 if (this.plugin.vectorStore.getFileHash(file.path) === contentHash) {
                     Logger.info(`[Lumos] Skipping ${file.path} as content hash matches.`);
                     return madeNetworkCall;
@@ -299,7 +302,12 @@ export class BackgroundIndexer {
                 const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
                 const plan = await planChunkEmbeddings(
                     file.path, chunks, previousChunks, contentHash,
-                    (text) => this.plugin.embeddingPipeline.embed(text)
+                    async (text) => {
+                        const vec = await this.plugin.embeddingPipeline.embed(text);
+                        if (this.embedDim === undefined) this.embedDim = vec.length;
+                        return vec;
+                    },
+                    this.embedDim
                 );
                 const vectorChunks = plan.vectorChunks;
                 const changedChunkTexts = plan.changedChunkTexts;
@@ -400,7 +408,7 @@ export class BackgroundIndexer {
                 cleanText += `Attendees: ${attendees}\n`;
             }
             
-            const contentHash = hashString(cleanText);
+            const contentHash = await hashString(cleanText);
 
             if (this.plugin.vectorStore.getFileHash(virtualPath) === contentHash) {
                 continue;
@@ -413,7 +421,12 @@ export class BackgroundIndexer {
                 const previousChunks = this.plugin.vectorStore.getChunks(virtualPath);
                 const plan = await planChunkEmbeddings(
                     virtualPath, chunks, previousChunks, contentHash,
-                    (text) => this.plugin.embeddingPipeline.embed(text)
+                    async (text) => {
+                        const vec = await this.plugin.embeddingPipeline.embed(text);
+                        if (this.embedDim === undefined) this.embedDim = vec.length;
+                        return vec;
+                    },
+                    this.embedDim
                 );
                 let firstEmbedding: number[] | null = plan.vectorChunks.length > 0 ? plan.vectorChunks[0].embedding : null;
                 if (plan.changedChunkTexts.length > 0 && !this.halted) {

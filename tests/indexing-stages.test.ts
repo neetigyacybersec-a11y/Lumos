@@ -15,14 +15,15 @@ describe('planChunkEmbeddings', () => {
         const t2 = 'also unchanged two';
         const t3 = 'brand new paragraph';
         const embed = vi.fn(async (text: string) => [text.length]);
+        const [h1, h2] = await Promise.all([hashString(t1), hashString(t2)]);
         const plan = await planChunkEmbeddings(
             'a.md',
             [t1, t2, t3],
             [
-                { chunkHash: hashString(t1), embedding: [11] },
-                { chunkHash: hashString(t2), embedding: [22] },
+                { chunkHash: h1, embedding: [11] },
+                { chunkHash: h2, embedding: [22] },
             ],
-            'filehash',
+            await hashString('filehash'),
             embed
         );
 
@@ -33,7 +34,7 @@ describe('planChunkEmbeddings', () => {
         expect(plan.vectorChunks[0].embedding).toEqual([11]);
         expect(plan.vectorChunks[1].embedding).toEqual([22]);
         expect(plan.vectorChunks[2].embedding).toEqual([t3.length]);
-        expect(plan.vectorChunks[0].chunkHash).toBe(hashString(t1));
+        expect(plan.vectorChunks[0].chunkHash).toBe(h1);
     });
 
     it('embeds everything when there is no previous state (fresh file)', async () => {

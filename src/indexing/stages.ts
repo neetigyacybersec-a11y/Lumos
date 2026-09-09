@@ -25,24 +25,31 @@ export interface ChunkPlanResult {
  * Builds the chunk list for a file, reusing stored embeddings for chunks
  * whose text is unchanged. Only genuinely new/changed chunks hit the embed
  * function — the invariant behind cheap partial edits.
+ *
+ * `expectedDim`, when provided, is the current model's embedding dimension:
+ * a stored vector whose length differs is treated as stale (e.g. left over
+ * from a different embedding model) and is NOT reused — it is re-embedded.
  */
 export async function planChunkEmbeddings(
     filePath: string,
     chunks: string[],
     previousChunks: { chunkHash?: string; embedding: number[] }[],
     contentHash: string,
-    embed: (text: string) => Promise<number[]>
+    embed: (text: string) => Promise<number[]>,
+    expectedDim?: number
 ): Promise<ChunkPlanResult> {
     const reusable = new Map<string, number[]>();
     for (const prev of previousChunks) {
         if (prev.chunkHash && prev.embedding.length > 0) {
-            reusable.set(prev.chunkHash, prev.embedding);
+            if (expectedDim === undefined || prev.embedding.length === expectedDim) {
+                reusable.set(prev.chunkHash, prev.embedding);
+            }
         }
     }
 
     const changedChunkTexts: string[] = [];
     const vectorChunks = await Promise.all(chunks.map(async (text, i) => {
-        const chunkHash = hashString(text);
+        const chunkHash = await hashString(text);
         let embedding = reusable.get(chunkHash);
         if (!embedding) {
             embedding = await embed(text);

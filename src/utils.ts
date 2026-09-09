@@ -1,12 +1,16 @@
-// Simple hash function for strings
-export function hashString(str: string): string {
-    let hash = 0;
-    for (let i = 0, len = str.length; i < len; i++) {
-        const chr = str.charCodeAt(i);
-        hash = (hash << 5) - hash + chr;
-        hash |= 0; // Convert to 32bit integer
-    }
-    return hash.toString(36); // Short base36 string
+/**
+ * Collision-resistant SHA-256 hash for string identity. Used both as the
+ * whole-file content hash (skip unchanged files) and the per-chunk hash that
+ * keys embedding reuse. A 32-bit polynomial hash (the old implementation) can
+ * collide at vault scale, silently reusing the wrong embedding or treating an
+ * edited file as unchanged — so identity must be cryptographic.
+ */
+export async function hashString(str: string): Promise<string> {
+    const data = new TextEncoder().encode(str);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
 }
 
 /** File types Lumos will parse, embed and relate. Single source of truth. */

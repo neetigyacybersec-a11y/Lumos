@@ -28,6 +28,63 @@ describe('VectorStore and Embeddings', () => {
 		expect(chunks.length).toBeGreaterThan(1);
 	});
 
+	it('keeps headings at the start of a new chunk (structure-aware)', () => {
+		const pipeline = new EmbeddingPipeline({ provider: 'ollama', baseUrl: 'x', llmModelName: 'm', visionModelName: 'v', embeddingModelName: 'm' } as unknown as PluginSettings);
+		const text = "Intro paragraph with a fair amount of body text.\n\n# Topic A\n\nContent for A.\n\n# Topic B\n\nContent for B.";
+		const chunks = pipeline.chunkText(text, 2);
+		// Every chunk that starts with a heading must begin exactly at that heading.
+		for (const c of chunks) {
+			if (c.startsWith('#')) {
+				expect(/^# Topic [AB]/.test(c.split('\n')[0])).toBe(true);
+			}
+		}
+		// Headed topics are never merged with each other.
+		const headed = chunks.filter(c => c.startsWith('#'));
+		expect(headed.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it('splits an oversized single paragraph so no chunk exceeds the char cap', () => {
+		const pipeline = new EmbeddingPipeline({ provider: 'ollama', baseUrl: 'x', llmModelName: 'm', visionModelName: 'v', embeddingModelName: 'm' } as unknown as PluginSettings);
+		const longPara = Array.from({ length: 200 }, (_, i) => `word${i}`).join(' '); // ~1100 chars
+		const chunks = pipeline.chunkText(longPara, 8); // 32-char cap
+		expect(chunks.length).toBeGreaterThan(1);
+		for (const c of chunks) expect(c.length).toBeLessThanOrEqual(40);
+	});
+
+	it('getFileHash returns the single authoritative meta contentHash, independent of per-chunk hashes', async () => {
+		const mockAdapter = {
+			read: vi.fn().mockResolvedValue('[]'),
+			write: vi.fn().mockResolvedValue(undefined)
+		};
+		const mockPlugin = {
+			manifest: { dir: 'test' },
+			app: { vault: { adapter: mockAdapter } }
+		} as any;
+
+		const store = new VectorStore(mockPlugin);
+		await store.load();
+
+		// Two chunks sharing a file-level contentHash via their first chunk.
+		await store.upsert('a.md', [
+			{ id: 'a#0', filePath: 'a.md', text: 'x', embedding: [1], contentHash: 'FILEHASH' },
+			{ id: 'a#1', filePath: 'a.md', text: 'y', embedding: [1], contentHash: 'OTHER' }
+		]);
+		// Deterministic: always the meta row's value, regardless of which chunk
+		// appears first in internal storage.
+		expect(store.getFileHash('a.md')).toBe('FILEHASH');
+
+		// Empty/failed file: upsert(path, []) still yields a stable row and no hash.
+		await store.upsert('empty.md', []);
+		expect(store.hasFile('empty.md')).toBe(true);
+		expect(store.getFileHash('empty.md')).toBeUndefined();
+
+		// Re-upserting a file refreshes the meta hash (no stale value).
+		await store.upsert('a.md', [
+			{ id: 'a#0', filePath: 'a.md', text: 'x', embedding: [1], contentHash: 'FILEHASH2' }
+		]);
+		expect(store.getFileHash('a.md')).toBe('FILEHASH2');
+	});
+
 	it('vector store handles upsert and query correctly', async () => {
 		const mockAdapter = {
 			read: vi.fn().mockResolvedValue('[]'),
