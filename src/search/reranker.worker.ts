@@ -18,9 +18,24 @@ let loadedId = '';
 async function ensureModel(modelId: string) {
     if (loadedId === modelId) return;
     const tf: any = await import('@huggingface/transformers');
-    tokenizer = await tf.AutoTokenizer.from_pretrained(modelId);
+    // Surface transformers.js download/load progress to the main thread so the
+    // UI can show the user what is happening instead of looking like a freeze.
+    const progress = (info: any) => {
+        ctx.postMessage({
+            id: undefined,
+            type: 'load_progress',
+            name: info?.name ?? modelId,
+            file: info?.file ?? '',
+            status: info?.status ?? '',
+            progress: info?.progress ?? null,
+            loaded: info?.loaded ?? null,
+            total: info?.total ?? null,
+        });
+    };
+    tokenizer = await tf.AutoTokenizer.from_pretrained(modelId, { progress_callback: progress });
     model = await tf.AutoModelForSequenceClassification.from_pretrained(modelId, {
         dtype: 'q8',
+        progress_callback: progress,
     });
     loadedId = modelId;
 }

@@ -1,5 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
+import fs from "fs";
 import builtins from "builtin-modules";
 
 const banner =
@@ -11,57 +12,77 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === 'production');
 
-const mainContext = await esbuild.context({
-	banner: {
-		js: banner,
-	},
-	entryPoints: ['src/main.ts'],
-	bundle: true,
-	external: [
-		'obsidian',
-		'electron',
-		// Never used by the plugin runtime (eval-harness-only code path); must
-		// not be inlined here — it ships inside reranker.worker.js instead.
-		'@huggingface/transformers',
-		'@codemirror/autocomplete',
-		'@codemirror/collab',
-		'@codemirror/commands',
-		'@codemirror/language',
-		'@codemirror/lint',
-		'@codemirror/search',
-		'@codemirror/state',
-		'@codemirror/view',
-		'@lezer/common',
-		'@lezer/highlight',
-		'@lezer/lr',
-		...builtins],
-	format: 'cjs',
-	target: 'es2018',
-	logLevel: "info",
-	sourcemap: prod ? false : 'inline',
-	treeShaking: true,
-	outfile: 'main.js',
-});
+// Provides the inlined reranker worker source as a string so the community
+// installer (which only ships main.js/manifest/styles) still gets a working
+// local reranker. Read from the built reranker.worker.js on disk.
+const inlineWorkerPlugin = {
+    name: 'inline-worker',
+    setup(build) {
+        build.onResolve({ filter: /^~worker-script$/ }, () => ({ path: '~worker-script', namespace: 'worker-script' }));
+        build.onLoad({ filter: /.*/, namespace: 'worker-script' }, async () => {
+            const script = fs.readFileSync('reranker.worker.js', 'utf8');
+            return {
+                contents: `export const RERANKER_WORKER_SCRIPT = ${JSON.stringify(script)};`,
+                loader: 'js',
+            };
+        });
+    },
+};
 
 // Separate bundle so the transformers.js runtime + ONNX model loading stay
-// entirely off the main plugin bundle and the UI thread.
+// entirely off the main plugin bundle and the UI thread. Built first so the
+// main bundle can inline its source.
 const workerContext = await esbuild.context({
-	entryPoints: ['src/search/reranker.worker.ts'],
-	outfile: 'reranker.worker.js',
-	bundle: true,
-	format: 'iife',
-	target: 'es2020',
-	logLevel: "info",
-	sourcemap: false,
-	treeShaking: true,
-	legalComments: 'none',
+    entryPoints: ['src/search/reranker.worker.ts'],
+    outfile: 'reranker.worker.js',
+    bundle: true,
+    format: 'iife',
+    target: 'es2020',
+    logLevel: "info",
+    sourcemap: false,
+    treeShaking: true,
+    legalComments: 'none',
+});
+
+const mainContext = await esbuild.context({
+    banner: {
+        js: banner,
+    },
+    entryPoints: ['src/main.ts'],
+    bundle: true,
+    external: [
+        'obsidian',
+        'electron',
+        // Never used by the plugin runtime (eval-harness-only code path); must
+        // not be inlined here — it ships inside reranker.worker.js instead.
+        '@huggingface/transformers',
+        '@codemirror/autocomplete',
+        '@codemirror/collab',
+        '@codemirror/commands',
+        '@codemirror/language',
+        '@codemirror/lint',
+        '@codemirror/search',
+        '@codemirror/state',
+        '@codemirror/view',
+        '@lezer/common',
+        '@lezer/highlight',
+        '@lezer/lr',
+        ...builtins],
+    format: 'cjs',
+    target: 'es2018',
+    logLevel: "info",
+    sourcemap: prod ? false : 'inline',
+    treeShaking: true,
+    outfile: 'main.js',
+    plugins: [inlineWorkerPlugin],
 });
 
 if (prod) {
-	await mainContext.rebuild();
-	await workerContext.rebuild();
-	process.exit(0);
+    // The inline plugin reads reranker.worker.js, so the worker must be built first.
+    await workerContext.rebuild();
+    await mainContext.rebuild();
+    process.exit(0);
 } else {
-	await mainContext.watch();
-	await workerContext.watch();
+    await workerContext.watch();
+    await mainContext.watch();
 }

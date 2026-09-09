@@ -10,7 +10,19 @@ export const RERANKER_MODEL_IDS: Record<RerankerModelKey, string> = {
 export interface RerankBackend {
     load(modelId: string): Promise<void>;
     score(query: string, documents: string[]): Promise<number[]>;
+    /** Optional hook the backend calls with download/load progress updates. */
+    setOnLoadProgress?(cb?: (progress: RerankerProgress) => void): void;
 }
+
+/** Progress info relayed from the worker during model download/load. */
+export type RerankerProgress = {
+    status: string;
+    file?: string;
+    /** 0..100 percent when status is 'progress'/'progress_total', else null. */
+    percent?: number | null;
+    loaded?: number | null;
+    total?: number | null;
+};
 
 /**
  * Main-thread handle over the ONNX cross-encoder running inside
@@ -21,6 +33,8 @@ export class Reranker {
     private backend: RerankBackend | null = null;
     private loadedKey: string | null = null;
     private failed = false;
+    /** Attach from the host to observe download/load progress. */
+    onProgress: ((progress: RerankerProgress) => void) | null = null;
 
     constructor(
         private createBackend?: (() => RerankBackend | null | Promise<RerankBackend | null>) | null,
@@ -28,6 +42,12 @@ export class Reranker {
         private onUnavailable?: () => void,
         private onModelLoad?: (modelId: string) => void
     ) {}
+
+    private attachProgress(backend: RerankBackend) {
+        if (typeof backend.setOnLoadProgress === 'function') {
+            backend.setOnLoadProgress((p) => this.onProgress?.(p));
+        }
+    }
 
     async rerank(
         query: string,
@@ -48,6 +68,7 @@ export class Reranker {
                     this.onUnavailable?.();
                     return null;
                 }
+                this.attachProgress(this.backend);
             }
             const modelId = RERANKER_MODEL_IDS[modelKey];
             if (this.loadedKey !== modelId) {
@@ -101,11 +122,16 @@ class WorkerBackend implements RerankBackend {
     private nextId = 1;
     private readyResolve: (() => void) | null = null;
     private readyReject: ((reason: any) => void) | null = null;
+    private onLoadProgress: ((progress: RerankerProgress) => void) | null = null;
 
     constructor(url: string) {
         this.worker = new Worker(url);
         this.worker.onmessage = (ev: MessageEvent) => this.onMessage(ev.data);
         this.worker.onerror = () => this.failAll(new Error('reranker worker crashed'));
+    }
+
+    setOnLoadProgress(cb?: (progress: RerankerProgress) => void) {
+        this.onLoadProgress = cb ?? null;
     }
 
     async load(modelId: string): Promise<void> {
@@ -151,6 +177,16 @@ class WorkerBackend implements RerankBackend {
             this.readyResolve?.();
             this.readyResolve = null;
             this.readyReject = null;
+            return;
+        }
+        if (msg?.type === 'load_progress') {
+            this.onLoadProgress?.({
+                status: msg.status,
+                file: msg.file,
+                percent: typeof msg.progress === 'number' ? msg.progress : null,
+                loaded: msg.loaded,
+                total: msg.total,
+            });
             return;
         }
         if (msg?.type === 'error' && !msg.id) {
