@@ -1,12 +1,14 @@
 import { Logger } from './logger';
 import { TFile, Notice } from 'obsidian';
 import { IndexerHost } from './ports';
-import { planChunkEmbeddings, mergeEdges } from './indexing/stages';
+import { IndexFileFlow } from './indexing/indexFileFlow';
+import { VaultFileInput } from './indexing/vaultFileInput';
+import { CalendarInput } from './indexing/calendarInput';
 import { readManifest, writeManifest, manifestNeedsRebuild } from './indexManifest';
 import { RELATION_VIEW_TYPE, RelationSidebarView } from './sidebarView';
-import { hashString, isPathIgnored, INDEXABLE_EXTENSIONS, IMAGE_EXTENSIONS } from './utils';
+import { isPathIgnored, INDEXABLE_EXTENSIONS } from './utils';
 import { IndexingProgressUI } from './progressUi';
-import { fetchAllCalendarEvents, GoogleEvent } from './googleCalendar';
+import { fetchAllCalendarEvents } from './googleCalendar';
 import { TerminalApiError, TransientApiError } from './llmService';
 
 
@@ -25,10 +27,12 @@ export class BackgroundIndexer {
     private halted: boolean = false;
     /** Current model's embedding dimension, learned from the first embed of a run. */
     private embedDim: number | undefined = undefined;
+    private flow: IndexFileFlow;
 
     constructor(plugin: IndexerHost) {
         this.plugin = plugin;
         this.progressUi = new IndexingProgressUI();
+        this.flow = new IndexFileFlow(plugin);
     }
 
     get isRunning(): boolean {
@@ -280,143 +284,9 @@ export class BackgroundIndexer {
     }
 
     private async indexFileAttempt(file: TFile): Promise<boolean> {
-        {
-                let madeNetworkCall = false;
-
-                // Check if file was somehow deleted while waiting
-                if (!(await this.plugin.app.vault.adapter.exists(file.path))) {
-                    return madeNetworkCall;
-                }
-
-                const ext = file.extension.toLowerCase();
-                let cleanText = '';
-                let shouldSkip = false;
-
-                if (ext === 'md') {
-                    const parsed = await this.plugin.parser.parse(file);
-                    cleanText = parsed.cleanText;
-                } else if (ext === 'pdf') {
-                    try {
-                        cleanText = await this.plugin.parser.parsePdf(file);
-                    } catch (e) {
-                        Logger.error(`Failed to parse PDF ${file.path}`, e);
-                        shouldSkip = true;
-                    }
-                } else if (IMAGE_EXTENSIONS.includes(ext)) {
-                    try {
-                        const hasText = await this.plugin.localOcr.hasText(file);
-                        if (hasText) {
-                            cleanText = await this.plugin.visionExtractor.extractImageText(file);
-                            madeNetworkCall = true;
-                        } else {
-                            shouldSkip = true;
-                        }
-                    } catch (e) {
-                        Logger.error(`Failed OCR on Image ${file.path}`, e);
-                        shouldSkip = true;
-                    }
-                }
-
-                if (shouldSkip || !cleanText || cleanText.trim() === '') {
-                    // Mark as indexed with 0 chunks so we don't process it on every startup
-                    await this.plugin.vectorStore.upsert(file.path, []);
-                    return madeNetworkCall;
-                }
-
-                const contentHash = await hashString(cleanText);
-                if (this.plugin.vectorStore.getFileHash(file.path) === contentHash) {
-                    Logger.info(`[Lumos] Skipping ${file.path} as content hash matches.`);
-                    return madeNetworkCall;
-                }
-
-                // Embed only new/changed chunks; reuse stored vectors for
-                // chunks whose text is unchanged (#incremental-edit).
-                const previousChunks = this.plugin.vectorStore.getChunks(file.path);
-                const isPartialUpdate = previousChunks.length > 0;
-
-                const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
-                const plan = await planChunkEmbeddings(
-                    file.path, chunks, previousChunks, contentHash,
-                    async (text) => {
-                        const vec = await this.plugin.embeddingPipeline.embed(text);
-                        if (this.embedDim === undefined) this.embedDim = vec.length;
-                        return vec;
-                    },
-                    this.embedDim
-                );
-                const vectorChunks = plan.vectorChunks;
-                const changedChunkTexts = plan.changedChunkTexts;
-                if (changedChunkTexts.length > 0) madeNetworkCall = true;
-                const firstEmbedding: number[] | null = vectorChunks.length > 0 ? vectorChunks[0].embedding : null;
-                await this.plugin.vectorStore.upsert(file.path, vectorChunks as any);
-
-                // Extract Relations (only if it has similar notes to compare to)
-                if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
-                    // Hybrid candidate selection: dense anchor embedding plus a
-                    // BM25 query over the new/changed text. Reranking is a search
-                    // feature only — never burn model inference per indexed file.
-                    const lexicalQuery = (changedChunkTexts.length > 0
-                        ? changedChunkTexts.join('\n\n')
-                        : cleanText).slice(0, 4000);
-                    const similar = await this.plugin.hybridRetriever.retrieve({
-                        queryVector: firstEmbedding,
-                        lexicalQuery,
-                        topK: 3,
-                        excludeFilePath: file.path,
-                        skipRerank: true,
-                    });
-                    if (similar.length > 0) {
-                        const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
-
-                        // On a partial edit, only send the changed excerpts to
-                        // the LLM instead of the whole file (#incremental-edit).
-                        const sourceText = isPartialUpdate
-                            ? changedChunkTexts.join('\n\n')
-                            : cleanText;
-                        const prompt = this.plugin.relationExtractor.constructPrompt(file.path, sourceText, candidates);
-                        const { edges, profileInsights } = await this.plugin.relationExtractor.extractRelations(prompt, file.path);
-                        madeNetworkCall = true;
-
-                        if (profileInsights) {
-                            await this.plugin.userProfileManager.addInsight(profileInsights);
-                        }
-
-                        // Compute final scores
-                        const scoredEdges = edges.map(edge => {
-                            const targetFile = this.plugin.app.vault.getAbstractFileByPath(edge.target);
-                            if (!(targetFile instanceof TFile)) return edge;
-
-                            const simMatch = similar.find(s => s.filePath === edge.target);
-                            const cosine = simMatch ? simMatch.similarity : 0;
-
-                            edge.scores = this.plugin.scoringEngine.calculateOverallScore(file, targetFile, cosine, edge.confidence);
-                            return edge;
-                        });
-
-                        // Keep relations discovered by unchanged chunks; the
-                        // LLM only re-derives those touching changed text.
-                        let finalEdges = scoredEdges;
-                        if (isPartialUpdate) {
-                            const existing = this.plugin.relationStore.getEdgesForPath(file.path)
-                                .filter(e => e.source === file.path);
-                            finalEdges = mergeEdges(existing, scoredEdges);
-                        }
-
-                        await this.plugin.relationStore.upsertEdges(file.path, finalEdges, true);
-
-                        // Process Backlinks
-                        if (ext === 'md') {
-                            await this.plugin.backlinkManager.processEdges(file, finalEdges);
-                        }
-                    } else {
-                        await this.plugin.userProfileManager.addActivity(cleanText);
-                    }
-                } else if (ext === 'md') {
-                    await this.plugin.userProfileManager.addActivity(cleanText);
-                }
-
-                return madeNetworkCall;
-        }
+        const { madeNetworkCall, embedDim } = await this.flow.index(new VaultFileInput(this.plugin, file), this.embedDim);
+        this.embedDim = embedDim;
+        return madeNetworkCall;
     }
 
     async indexCalendarEvents() {
@@ -434,64 +304,11 @@ export class BackgroundIndexer {
                 cursor++;
                 continue;
             }
-            const virtualPath = `gcal://${event.id}`;
-            const startDate = event.start.dateTime ? new Date(event.start.dateTime).toLocaleString() : event.start.date;
-            let cleanText = `[Google Calendar Event]\nTitle: ${event.summary}\nDate: ${startDate}\n`;
-            if (event.description) cleanText += `Description: ${event.description}\n`;
-            if (event.attendees && event.attendees.length > 0) {
-                const attendees = event.attendees.map(a => a.displayName || a.email).join(', ');
-                cleanText += `Attendees: ${attendees}\n`;
-            }
-            
-            const contentHash = await hashString(cleanText);
-
-            if (this.plugin.vectorStore.getFileHash(virtualPath) === contentHash) {
-                continue;
-            }
 
             try {
                 await this.runWithRetry(async () => {
-                // Embed — same incremental chunk plan as vault files
-                const chunks = this.plugin.embeddingPipeline.chunkText(cleanText);
-                const previousChunks = this.plugin.vectorStore.getChunks(virtualPath);
-                const plan = await planChunkEmbeddings(
-                    virtualPath, chunks, previousChunks, contentHash,
-                    async (text) => {
-                        const vec = await this.plugin.embeddingPipeline.embed(text);
-                        if (this.embedDim === undefined) this.embedDim = vec.length;
-                        return vec;
-                    },
-                    this.embedDim
-                );
-                let firstEmbedding: number[] | null = plan.vectorChunks.length > 0 ? plan.vectorChunks[0].embedding : null;
-                if (plan.changedChunkTexts.length > 0 && !this.halted) {
-                    await this.plugin.vectorStore.upsert(virtualPath, plan.vectorChunks as any);
-                }
-                
-                // Extract Relations
-                if (firstEmbedding && this.plugin.vectorStore.getFileCount() > 1) {
-                    const similar = await this.plugin.hybridRetriever.retrieve({
-                        queryVector: firstEmbedding,
-                        lexicalQuery: cleanText.slice(0, 4000),
-                        topK: 3,
-                        excludeFilePath: virtualPath,
-                        skipRerank: true,
-                    });
-                    if (similar.length > 0) {
-                        const candidates = similar.map(s => ({ path: s.filePath, text: s.text }));
-                        const prompt = this.plugin.relationExtractor.constructPrompt(virtualPath, cleanText, candidates);
-                        const { edges } = await this.plugin.relationExtractor.extractRelations(prompt, virtualPath);
-                        
-                        // We do not compute overall scores for calendar events using the scoring engine because it expects TFile
-                        // Just use confidence
-                        const scoredEdges = edges.map(edge => {
-                            edge.scores = { overall: edge.confidence, llm: edge.confidence, cosine: 0, keyword: 0, folder: 0, recency: 0 };
-                            return edge;
-                        });
-
-                        await this.plugin.relationStore.upsertEdges(virtualPath, scoredEdges, true);
-                    }
-                }
+                    const { embedDim } = await this.flow.index(new CalendarInput(event), this.embedDim);
+                    this.embedDim = embedDim;
                 });
                 processedCount++;
 
