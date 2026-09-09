@@ -118,10 +118,9 @@ export default class LumosPlugin extends Plugin {
 				// Clear the stores
 				await this.vectorStore.clear();
 				await this.relationStore.clear();
-				
+
 				// Re-run the indexer
-				this.indexer.queue = [];
-				this.indexer.isProcessing = false;
+				this.indexer.reset();
 				await this.indexer.start();
 			}
 		});
@@ -139,14 +138,7 @@ export default class LumosPlugin extends Plugin {
 				await this.vectorStore.delete(file.path);
 				await this.relationStore.deleteEdges(file.path);
 				this.indexer.clearFailure(file.path);
-				this.indexer.enqueue(file, true);
-				if (!this.indexer.isProcessing) {
-					this.indexer.totalFiles = this.indexer.queue.length;
-					this.indexer.processedFiles = 0;
-					this.indexer.processQueue();
-				} else {
-					this.indexer.totalFiles = Math.max(this.indexer.totalFiles + 1, this.indexer.queue.length);
-				}
+				await this.indexer.enqueueAndRun(file, { force: true });
 			}
 		});
 
@@ -170,19 +162,11 @@ export default class LumosPlugin extends Plugin {
 						await this.vectorStore.delete(filePath);
 						await this.relationStore.deleteEdges(filePath);
 						this.indexer.clearFailure(filePath);
-						this.indexer.enqueue(file, true);
-						queued++;
+						if (await this.indexer.enqueueAndRun(file, { force: true })) queued++;
 					}
 				}
 
 				if (queued > 0) {
-					if (!this.indexer.isProcessing) {
-						this.indexer.totalFiles = this.indexer.queue.length;
-						this.indexer.processedFiles = 0;
-						this.indexer.processQueue();
-					} else {
-						this.indexer.totalFiles = Math.max(this.indexer.totalFiles + queued, this.indexer.queue.length);
-					}
 					new Notice(`Queued ${queued} failed/empty files for re-indexing.`);
 				} else {
 					new Notice('Could not find the actual files for the failed entries.');
@@ -441,15 +425,7 @@ export default class LumosPlugin extends Plugin {
 				await this.vectorStore.delete(file.path);
 				await this.relationStore.deleteEdges(file.path);
 			} else {
-				if (this.indexer.enqueue(file)) {
-					if (!this.indexer.isProcessing) {
-						this.indexer.totalFiles = this.indexer.queue.length;
-						this.indexer.processedFiles = 0;
-						this.indexer.processQueue();
-					} else {
-						this.indexer.totalFiles = Math.max(this.indexer.totalFiles + 1, this.indexer.queue.length);
-					}
-				}
+				await this.indexer.enqueueAndRun(file);
 			}
 		});
 

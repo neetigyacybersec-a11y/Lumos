@@ -15,7 +15,7 @@ const FILE_WATCHDOG_MS = 120_000;
 export class BackgroundIndexer {
     plugin: IndexerHost;
     queue: TFile[] = [];
-    isProcessing: boolean = false;
+    private _isProcessing: boolean = false;
     progressUi: IndexingProgressUI;
     totalFiles: number = 0;
     processedFiles: number = 0;
@@ -29,6 +29,41 @@ export class BackgroundIndexer {
     constructor(plugin: IndexerHost) {
         this.plugin = plugin;
         this.progressUi = new IndexingProgressUI();
+    }
+
+    get isRunning(): boolean {
+        return this._isProcessing;
+    }
+
+    get progress(): { total: number; processed: number } {
+        return { total: this.totalFiles, processed: this.processedFiles };
+    }
+
+    /**
+     * Single command/queue seam: enqueues a file and owns the total/progress
+     * bookkeeping and kick-off, so callers never touch @queue/@totalFiles/
+     * @processedFiles directly. Returns whether the file was actually enqueued.
+     */
+    async enqueueAndRun(file: TFile, opts: { force?: boolean } = {}): Promise<boolean> {
+        const added = this.enqueue(file, opts.force ?? false);
+        if (!added) return false;
+        if (!this._isProcessing) {
+            this.totalFiles = this.queue.length;
+            this.processedFiles = 0;
+            this.processQueue();
+        } else {
+            this.totalFiles = Math.max(this.totalFiles + 1, this.queue.length);
+        }
+        return true;
+    }
+
+    /** Abandons any in-flight/queued work and resets all progress counters. */
+    reset() {
+        this.queue = [];
+        this._isProcessing = false;
+        this.totalFiles = 0;
+        this.processedFiles = 0;
+        this.halted = false;
     }
 
     /**
@@ -59,7 +94,7 @@ export class BackgroundIndexer {
     }
 
     async start() {
-        if (this.isProcessing) return;
+        if (this._isProcessing) return;
 
         // The persisted index could not be read. NEVER treat this as "empty
         // vault" and silently rehash everything (a stash-burning full scan).
@@ -110,8 +145,8 @@ export class BackgroundIndexer {
     }
 
     async processQueue() {
-        if (this.isProcessing || this.queue.length === 0) return;
-        this.isProcessing = true;
+        if (this._isProcessing || this.queue.length === 0) return;
+        this._isProcessing = true;
         this.halted = false;
         this.plugin.userProfileManager.pauseUpdates();
 
@@ -163,7 +198,7 @@ export class BackgroundIndexer {
             // Preserve the remaining queue (current file included) for next time,
             // exactly like the pre-watchdog circuit-break behaviour.
             this.queue = this.queue.slice(cursor);
-            this.isProcessing = false;
+            this._isProcessing = false;
             this.progressUi.hide();
             return;
         }
@@ -187,7 +222,7 @@ export class BackgroundIndexer {
         this.plugin.userProfileManager.resumeUpdates();
         await this.plugin.userProfileManager.flush();
 
-        this.isProcessing = false;
+        this._isProcessing = false;
         this.progressUi.hide();
         new Notice(`[LLM Relations] Initial vault indexing complete!`);
 

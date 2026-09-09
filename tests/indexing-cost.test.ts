@@ -222,7 +222,7 @@ async function makeWorld(
 
 async function drain(indexer: BackgroundIndexer) {
 	await indexer.start();
-	while ((indexer as any).isProcessing) {
+	while ((indexer as any).isRunning) {
 		await new Promise((r) => setImmediate(r));
 	}
 }
@@ -381,6 +381,31 @@ describe('indexer resilience', () => {
 		expect(w1.indexer.enqueue(a)).toBe(true);
 		expect(w1.indexer.enqueue(a)).toBe(false);
 		expect(w1.indexer.queue.filter((f) => f.path === 'a.md')).toHaveLength(1);
+	});
+
+	it('enqueueAndRun owns kick-off and progress bookkeeping; reset clears it', async () => {
+		const { indexer, files } = await makeWorld({ 'a.md': para('alpha') });
+		expect(indexer.isRunning).toBe(false);
+
+		// First enqueue as the sole work kicks off processing immediately.
+		const queued = await indexer.enqueueAndRun(files.get('a.md')!, { force: true });
+		expect(queued).toBe(true);
+		expect(indexer.isRunning).toBe(true);
+
+		// A duplicate while running is refused without double-counting progress.
+		const again = await indexer.enqueueAndRun(files.get('a.md')!, { force: true });
+		expect(again).toBe(false);
+
+		await drain(indexer);
+		expect(indexer.isRunning).toBe(false);
+		expect(indexer.progress.processed).toBe(indexer.progress.total);
+
+		// reset abandons work and zeroes counters.
+		await indexer.enqueueAndRun(files.get('a.md')!, { force: true });
+		indexer.reset();
+		expect(indexer.isRunning).toBe(false);
+		expect(indexer.progress).toEqual({ total: 0, processed: 0 });
+		await drain(indexer);
 	});
 });
 
