@@ -75,6 +75,23 @@ OUTPUT CONTRACT:
         return await this.callLLM(messages);
     }
 
+    async beautifySelection(text: string): Promise<string> {
+        const systemPrompt = `You are a copyeditor for an Obsidian vault.
+The user message is one selection from a note. Rewrite that selection so it reads beautifully while preserving every fact, idea, and piece of markdown syntax it contains.
+
+RULES:
+1. Fix typos, grammar, and awkward phrasing. Never invent, drop, or reword facts.
+2. Keep inline wiki links [[...]], tags (#tag), embeds (![[...]]), callouts (> ...), code fences, and images exactly verbatim.
+3. Keep the selection as Markdown only; no preamble, no "Here is", no commentary, no "=== " markers, no summary callout wrapper unless the source already uses one.
+4. For lists, convert to "## ", bullet, or numbered lists / "- [ ]" tasks only when the source clearly is one.
+5. Output ONLY the rewritten selection.`;
+        const messages: ChatMessage[] = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: text }
+        ];
+        return await this.callLLM(messages);
+    }
+
     async extractMetadata(text: string): Promise<{ tags: string[], summary: string } | null> {
         const systemPrompt = `You are a metadata extraction tool for an Obsidian vault.
 Your task is to analyze the provided text and output a JSON object with two fields:

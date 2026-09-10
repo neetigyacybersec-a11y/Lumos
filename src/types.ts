@@ -25,6 +25,7 @@ export interface PluginSettings {
 	beautifyAddRelatedNotes: boolean;
 	beautifyAddImageCaptions: boolean;
 	beautifyRelatedTopK: number;
+	beautifyCacheEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -51,6 +52,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	beautifyAddRelatedNotes: true,
 	beautifyAddImageCaptions: true,
 	beautifyRelatedTopK: 5,
+	beautifyCacheEnabled: true,
 }
 
 export interface ParsedNote {

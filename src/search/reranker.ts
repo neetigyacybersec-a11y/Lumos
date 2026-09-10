@@ -32,6 +32,7 @@ export type RerankerProgress = {
 export class Reranker {
     private backend: RerankBackend | null = null;
     private loadedKey: string | null = null;
+    private loadAttempts = 0;
     private failed = false;
     /** Attach from the host to observe download/load progress. */
     onProgress: ((progress: RerankerProgress) => void) | null = null;
@@ -75,8 +76,19 @@ export class Reranker {
                 // First load downloads weights (~4-23MB); surface it so a slow
                 // download never reads as a silent freeze.
                 this.onModelLoad?.(modelId);
-                await this.backend.load(modelId);
+                try {
+                    await this.backend.load(modelId);
+                } catch (loadErr) {
+                    // One automatic retry: an aborted first attempt (stall
+                    // watchdog or worker hiccup) is frequently a transient
+                    // blip; a second failure disables the backend for good.
+                    if (this.loadAttempts >= 1) throw loadErr;
+                    this.loadAttempts++;
+                    Logger.warn('[Lumos] Reranker model load failed once, retrying…', loadErr);
+                    await this.backend.load(modelId);
+                }
                 this.loadedKey = modelId;
+                this.loadAttempts = 0;
             }
             const logits = await this.backend.score(query, documents);
             return logits.map(sigmoid);
@@ -105,11 +117,11 @@ type Pending = {
  * resource URL throws SecurityError (cross-origin). Bundling the script text
  * into a same-origin blob URL is allowed everywhere.
  */
-export function createBlobWorkerBackend(scriptText: string): RerankBackend | null {
+export function createBlobWorkerBackend(scriptText: string, cacheDir?: string): RerankBackend | null {
     try {
         const blob = new Blob([scriptText], { type: 'text/javascript' });
         const url = URL.createObjectURL(blob);
-        return new WorkerBackend(url);
+        return new WorkerBackend(url, cacheDir);
     } catch (e) {
         Logger.warn('[Lumos] Could not spawn reranker worker from blob URL:', e);
         return null;
@@ -123,8 +135,10 @@ class WorkerBackend implements RerankBackend {
     private readyResolve: (() => void) | null = null;
     private readyReject: ((reason: any) => void) | null = null;
     private onLoadProgress: ((progress: RerankerProgress) => void) | null = null;
+    private sawAnyProgress = false;
+    private lastActivity = 0;
 
-    constructor(url: string) {
+    constructor(url: string, private cacheDir?: string) {
         this.worker = new Worker(url);
         this.worker.onmessage = (ev: MessageEvent) => this.onMessage(ev.data);
         this.worker.onerror = () => this.failAll(new Error('reranker worker crashed'));
@@ -135,15 +149,44 @@ class WorkerBackend implements RerankBackend {
     }
 
     async load(modelId: string): Promise<void> {
-        // First load downloads model weights (~4-23MB); 60s cap so a stalled
-        // download degrades to fusion ranking instead of hanging callers.
+        // First load downloads model weights (~4-23MB). A flat wall-clock cap
+        // aborts real downloads on slow links, so instead watch for *stalls*:
+        // tolerate any activity, only give up when there is none for a while.
+        const FIRST_PROGRESS_MS = 30000;
+        const IDLE_MS = 90000;
+        const MAX_LOAD_MS = 15 * 60 * 1000;
+
+        this.sawAnyProgress = false;
+        this.lastActivity = Date.now();
+
         const ready = new Promise<void>((resolve, reject) => {
             this.readyResolve = resolve;
             this.readyReject = reject;
         });
-        const timer = setTimeout(() => this.readyReject?.(new Error('model load timed out')), 60000);
-        this.post({ type: 'load', modelId });
-        await ready;
+
+        const abort = (message: string) => {
+            this.readyReject?.(new Error(message));
+            this.readyResolve = null;
+            this.readyReject = null;
+        };
+
+        const firstTimer = setTimeout(() => {
+            if (!this.sawAnyProgress) abort('model download stalled before any progress');
+        }, FIRST_PROGRESS_MS);
+        const idleTimer = setInterval(() => {
+            if (!this.sawAnyProgress) return;
+            if (Date.now() - this.lastActivity > IDLE_MS) abort('model download stalled (no progress)');
+        }, 5000);
+        const maxTimer = setTimeout(() => abort('model load exceeded time budget'), MAX_LOAD_MS);
+
+        try {
+            this.post({ type: 'load', modelId, cacheDir: this.cacheDir });
+            await ready;
+        } finally {
+            clearTimeout(firstTimer);
+            clearInterval(idleTimer);
+            clearTimeout(maxTimer);
+        }
     }
 
     async score(query: string, documents: string[]): Promise<number[]> {
@@ -180,6 +223,8 @@ class WorkerBackend implements RerankBackend {
             return;
         }
         if (msg?.type === 'load_progress') {
+            this.sawAnyProgress = true;
+            this.lastActivity = Date.now();
             this.onLoadProgress?.({
                 status: msg.status,
                 file: msg.file,

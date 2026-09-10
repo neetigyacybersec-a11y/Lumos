@@ -1,4 +1,6 @@
 import { Logger } from './logger';
+import { hashString } from './utils';
+import { BeautifyBlockRecord, BeautifyNoteRecord } from './beautifyCache';
 
 /** Structural stand-in for obsidian's TFile so this module stays testable. */
 export interface VaultFilePath {
@@ -22,6 +24,7 @@ export interface BeautifyHost {
     transcribeImage(file: VaultFilePath): Promise<string>;
     retrieveRelated(query: string, topK: number, excludeFilePath: string): Promise<{ filePath: string; text: string }[]>;
     beautifyViaLLM(payload: string, opts: BeautifyOptions): Promise<string>;
+    beautifySelectionViaLLM?(text: string): Promise<string>;
 }
 
 export interface BeautifyOptions {
@@ -30,15 +33,32 @@ export interface BeautifyOptions {
     relatedTopK: number;
 }
 
+export interface BeautifyIdentity {
+    model: string;
+    optsHash: string;
+}
+
+export interface BeautifyCacheOps {
+    getNote(path: string): BeautifyNoteRecord | null;
+    setWhole(path: string, whole: Omit<BeautifyNoteRecord, 'updatedAt' | 'blocks'>): void;
+    invalidateNote(path: string, skipSave?: boolean): void;
+    getBlock(path: string, key: string): BeautifyBlockRecord | null;
+    setBlock(path: string, block: BeautifyBlockRecord): void;
+}
+
 const EMBED_RE = /!\[\[([^\[\]|#]+?\.(?:png|jpe?g|webp))(?:\|([^\]]*))?\]\]/gi;
 
 /** Pull embedded local images out of a markdown doc as `![[folder/photo.png]]` (with optional |size/alt). */
 export function extractEmbeds(content: string): ImageEmbed[] {
+    const seen = new Set<string>();
     const images: ImageEmbed[] = [];
     for (const match of content.matchAll(EMBED_RE)) {
+        const linkPath = match[1].trim();
+        if (seen.has(linkPath)) continue;
+        seen.add(linkPath);
         const alt = (match[2] || '').trim();
         images.push({
-            linkPath: match[1].trim(),
+            linkPath,
             ...(alt ? { alt } : {}),
         });
     }
@@ -140,8 +160,23 @@ export async function beautifyNote(
     sourcePath: string,
     host: BeautifyHost,
     opts: BeautifyOptions,
-    maxImages: number = 5
+    maxImages: number = 5,
+    cache: BeautifyCacheOps | null = null,
+    identity: BeautifyIdentity | null = null,
+    force = false
 ): Promise<string> {
+    if (cache && identity && !force) {
+        const record = cache.getNote(sourcePath);
+        if (
+            record?.wholeBeautified &&
+            record.sourceHash === (await hashString(content)) &&
+            record.model === identity.model &&
+            record.optsHash === identity.optsHash
+        ) {
+            return record.wholeBeautified;
+        }
+    }
+
     const originalLinks = extractOriginalLinks(content);
 
     const images = opts.imageCaptions
@@ -158,5 +193,54 @@ export async function beautifyNote(
         imageCaptions: opts.imageCaptions,
     });
 
-    return reviewWhitelist(beautified, related.map(r => r.name), originalLinks);
+    const guarded = reviewWhitelist(beautified, related.map(r => r.name), originalLinks);
+
+    if (cache && identity) {
+        cache.setWhole(sourcePath, {
+            sourceHash: await hashString(content),
+            wholeBeautified: guarded,
+            model: identity.model,
+            optsHash: identity.optsHash,
+        });
+    }
+
+    return guarded;
+}
+
+/** Beautify a single selection/block with the compact copyedit prompt, caching per-source. */
+export async function beautifySelection(
+    source: string,
+    sourcePath: string,
+    host: BeautifyHost,
+    opts: { relatedNotes: boolean; relatedTopK: number },
+    cache: BeautifyCacheOps | null = null,
+    identity: BeautifyIdentity | null = null
+): Promise<string> {
+    if (!host.beautifySelectionViaLLM) {
+        throw new Error('Selection beautify is not supported by this host.');
+    }
+    const key = cache && identity ? await hashString(source) : '';
+    if (cache && identity) {
+        const cached = cache.getBlock(sourcePath, key);
+        if (cached && cached.model === identity.model) return cached.beautified;
+    }
+
+    const related = opts.relatedNotes
+        ? await collectRelated(source, sourcePath, host, opts.relatedTopK)
+        : [];
+    const originalLinks = extractOriginalLinks(source);
+    const beautified = await host.beautifySelectionViaLLM(source);
+    const guarded = reviewWhitelist(beautified, related.map(r => r.name), originalLinks);
+
+    if (cache && identity) {
+        cache.setBlock(sourcePath, {
+            key,
+            source,
+            beautified: guarded,
+            model: identity.model,
+            cachedAt: Date.now(),
+        });
+    }
+
+    return guarded;
 }

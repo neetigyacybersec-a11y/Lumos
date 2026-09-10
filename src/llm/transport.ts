@@ -120,6 +120,8 @@ export function drainBuffer(
 
 export interface LLMTransport {
     readonly provider: 'ollama' | 'openrouter';
+    readonly llmModelName: string;
+    readonly visionModelName: string;
     chat(messages: ChatMessage[], opts?: ChatOptions): Promise<string>;
     /**
      * Streaming variant. onChunk receives deltas as they arrive; the returned
@@ -136,6 +138,14 @@ class RestTransport implements LLMTransport {
 
     get provider(): 'ollama' | 'openrouter' {
         return this.settings.provider;
+    }
+
+    get llmModelName(): string {
+        return this.settings.llmModelName;
+    }
+
+    get visionModelName(): string {
+        return this.settings.visionModelName;
     }
 
     private timeoutSec(): number {

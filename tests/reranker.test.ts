@@ -106,6 +106,106 @@ describe('reranker worker spawning under Obsidian origins', () => {
         })();
     });
 
+	describe('reranker model load watchdog', () => {
+    it('keeps waiting while a slow (>60s) download keeps making progress', async () => {
+        vi.useFakeTimers();
+        try {
+            const backend = createBlobWorkerBackend('/* bundle */')!;
+            const loadPromise = backend.load('Xenova/ms-marco-MiniLM-L-6-v2');
+
+            await vi.advanceTimersByTimeAsync(10000);
+            workerHandler!({ data: { type: 'load_progress', status: 'progress_total', progress: 12 } });
+
+            // Tick past the old flat 60s cap, relaying steady progress.
+            for (let s = 11; s <= 75; s++) {
+                await vi.advanceTimersByTimeAsync(1000);
+                workerHandler!({ data: { type: 'load_progress', status: 'progress_total', progress: s } });
+            }
+
+            workerHandler!({ data: { type: 'ready' } });
+            await expect(loadPromise).resolves.toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('REGRESSION: rejects once there is no progress within the first-progress deadline', async () => {
+        vi.useFakeTimers();
+        try {
+            const backend = createBlobWorkerBackend('/* bundle */')!;
+            const loadPromise = backend.load('Xenova/ms-marco-MiniLM-L-6-v2');
+            const assertion = expect(loadPromise).rejects.toThrow(/stalled/);
+            await vi.advanceTimersByTimeAsync(31000);
+            await assertion;
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('REGRESSION: rejects when progress stops mid-download', async () => {
+        vi.useFakeTimers();
+        try {
+            const backend = createBlobWorkerBackend('/* bundle */')!;
+            const loadPromise = backend.load('Xenova/ms-marco-MiniLM-L-6-v2');
+
+            await vi.advanceTimersByTimeAsync(10000);
+            workerHandler!({ data: { type: 'load_progress', status: 'progress_total', progress: 20 } });
+            await vi.advanceTimersByTimeAsync(20000);
+            workerHandler!({ data: { type: 'load_progress', status: 'progress_total', progress: 40 } });
+
+            const assertion = expect(loadPromise).rejects.toThrow(/stalled/);
+            await vi.advanceTimersByTimeAsync(95000);
+            await assertion;
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('cleans up the watchdog so a fresh load can succeed after a rejection', async () => {
+        vi.useFakeTimers();
+        try {
+            const backend = createBlobWorkerBackend('/* bundle */')!;
+            const p1 = backend.load('Xenova/ms-marco-MiniLM-L-6-v2');
+            const assertion = expect(p1).rejects.toThrow(/stalled/);
+            await vi.advanceTimersByTimeAsync(31000);
+            await assertion;
+
+            const p2 = backend.load('Xenova/ms-marco-MiniLM-L-6-v2');
+            workerHandler!({ data: { type: 'ready' } });
+            await expect(p2).resolves.toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('reranker model load retry', () => {
+    it('retries a transient load failure once before succeeding', async () => {
+        const backend: any = {
+            load: vi.fn().mockRejectedValueOnce(new Error('stall')).mockResolvedValueOnce(undefined),
+            score: vi.fn(async (_q: string, docs: string[]) => docs.map(() => 0.9)),
+        };
+        const onUnavailable = vi.fn();
+        const reranker = new Reranker(() => backend, false, onUnavailable);
+        const scores = await reranker.rerank('q', ['a', 'b'], 'mini');
+        expect(backend.load).toHaveBeenCalledTimes(2);
+        expect(scores).toHaveLength(2);
+        expect(onUnavailable).not.toHaveBeenCalled();
+    });
+
+    it('disables the reranker for the session after two load failures', async () => {
+        const backend: any = {
+            load: vi.fn().mockRejectedValue(new Error('down')),
+            score: vi.fn(),
+        };
+        const onUnavailable = vi.fn();
+        const reranker = new Reranker(() => backend, false, onUnavailable);
+        expect(await reranker.rerank('q', ['a'], 'mini')).toBeNull();
+        expect(backend.load).toHaveBeenCalledTimes(2);
+        expect(onUnavailable).toHaveBeenCalledTimes(1);
+    });
+});
+
 	it('end-to-end: hybrid retrieval uses the blob-spawned reranker', async () => {
 		const backend = createBlobWorkerBackend('/* bundle */')!;
 		let rerankCalls = 0;

@@ -1,5 +1,5 @@
 import { Logger } from './logger';
-import { Plugin, TFile, WorkspaceLeaf, MarkdownView, Notice } from 'obsidian';
+import { Plugin, TFile, WorkspaceLeaf, MarkdownView, Notice, EditorPosition } from 'obsidian';
 import { PluginSettings, DEFAULT_SETTINGS } from './types';
 import { RelationSettingTab } from './settings';
 import { Watcher } from './watcher';
@@ -13,7 +13,7 @@ import { RelationExtractor } from './relations';
 import { RelationSidebarView, RELATION_VIEW_TYPE } from './sidebarView';
 import { BackgroundIndexer } from './indexer';
 import { BacklinkManager } from './backlinker';
-import { isPathIgnored } from './utils';
+import { isPathIgnored, hashString } from './utils';
 import { ScoringEngine } from './scoring';
 import { VisionExtractor } from './vision';
 import { LocalOcr } from './localOcr';
@@ -26,7 +26,10 @@ import { HybridRetriever } from './search/hybridRetriever';
 import { Reranker, createBlobWorkerBackend, type RerankerProgress } from './search/reranker';
 import { WORKER_SCRIPT } from './search/workerScript';
 import { RagAnswerer } from './ragAnswer';
-import { beautifyNote, BeautifyHost } from './beautify';
+import { beautifyNote, beautifySelection, BeautifyHost, BeautifyIdentity } from './beautify';
+import { blockAt } from './beautifyDiff';
+import { VisionCache } from './visionCache';
+import { BeautifyCache } from './beautifyCache';
 
 export default class LumosPlugin extends Plugin {
 	settings: PluginSettings;
@@ -47,6 +50,8 @@ export default class LumosPlugin extends Plugin {
 	lexicalIndex: MirroredIndex;
 	hybridRetriever: HybridRetriever;
 	ragAnswerer: RagAnswerer;
+	visionCache: VisionCache;
+	beautifyCache: BeautifyCache;
 
 	public activityLog: string[] = [];
 	private rerankerStatusEl: HTMLElement | null = null;
@@ -81,6 +86,150 @@ export default class LumosPlugin extends Plugin {
 			el.setText('Lumos: reranker model ready');
 			el.show();
 		}
+	}
+
+	private beautifyHost(): BeautifyHost {
+		return {
+			resolveEmbed: (linkPath, sourcePath) =>
+				this.app.metadataCache.getFirstLinkpathDest(linkPath, sourcePath),
+			transcribeImage: (file) => this.visionExtractor.extractImageText(file as TFile),
+			retrieveRelated: (query, topK, excludeFilePath) =>
+				this.hybridRetriever
+					.retrieve({ query, topK, excludeFilePath })
+					.then(results => results.map(r => ({ filePath: r.filePath, text: r.text }))),
+			beautifyViaLLM: (payload, opts) =>
+				this.llmService.beautifyText(payload, {
+					relatedNotes: opts.relatedNotes,
+					imageCaptions: opts.imageCaptions,
+				}),
+			beautifySelectionViaLLM: (text) => this.llmService.beautifySelection(text),
+		};
+	}
+
+	private async beautifyIdentity(): Promise<BeautifyIdentity> {
+		const opts = JSON.stringify({
+			provider: this.llmTransport.provider,
+			relatedNotes: this.settings.beautifyAddRelatedNotes,
+			imageCaptions: this.settings.beautifyAddImageCaptions,
+			relatedTopK: this.settings.beautifyRelatedTopK,
+		});
+		return {
+			model: this.llmTransport.llmModelName,
+			optsHash: await hashString(opts),
+		};
+	}
+
+	private async runBeautifyPage(force = false) {
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!view) {
+			new Notice('No active Markdown view found.');
+			return;
+		}
+
+		const editor = view.editor;
+		const text = editor.getValue();
+		if (!text.trim()) {
+			new Notice('Page is empty.');
+			return;
+		}
+
+		new Notice(force ? 'Force beautifying page...' : 'Beautifying page...');
+		try {
+			const identity = await this.beautifyIdentity();
+			const cache = this.settings.beautifyCacheEnabled ? this.beautifyCache : null;
+			const beautifiedText = await beautifyNote(
+				text,
+				view.file.path,
+				this.beautifyHost(),
+				{
+					relatedNotes: this.settings.beautifyAddRelatedNotes,
+					imageCaptions: this.settings.beautifyAddImageCaptions,
+					relatedTopK: this.settings.beautifyRelatedTopK,
+				},
+				5,
+				cache,
+				identity,
+				force
+			);
+			if (beautifiedText && beautifiedText.trim()) {
+				editor.setValue(beautifiedText);
+				new Notice('Page beautified!');
+			} else {
+				new Notice('Failed to beautify: LLM returned empty text.');
+			}
+		} catch (e) {
+			Logger.error('[Lumos] Beautify failed', e);
+			new Notice('Failed to beautify page. Check console.');
+		}
+	}
+
+	private async runBeautifySelection() {
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!view) {
+			new Notice('No active Markdown view found.');
+			return;
+		}
+
+		const editor = view.editor;
+		const content = editor.getValue();
+		let selection = editor.getSelection();
+		let from: EditorPosition;
+		let to: EditorPosition;
+
+		if (selection && selection.trim()) {
+			from = editor.getCursor('from');
+			to = editor.getCursor('to');
+		} else {
+			const cursor = editor.getCursor();
+			const offset = editor.posToOffset(cursor);
+			const block = blockAt(content, offset);
+			if (!block) {
+				new Notice('No block found at the cursor.');
+				return;
+			}
+			selection = block.text;
+			from = editor.offsetToPos(block.start);
+			to = editor.offsetToPos(block.start + block.text.length);
+			new Notice('No text selected — beautifying the block at the cursor.');
+		}
+
+		if (!selection.trim()) {
+			new Notice('Selection is empty.');
+			return;
+		}
+
+		new Notice('Beautifying selection...');
+		try {
+			const identity = await this.beautifyIdentity();
+			const cache = this.settings.beautifyCacheEnabled ? this.beautifyCache : null;
+			const beautified = await beautifySelection(
+				selection,
+				view.file.path,
+				this.beautifyHost(),
+				{
+					relatedNotes: this.settings.beautifyAddRelatedNotes,
+					relatedTopK: this.settings.beautifyRelatedTopK,
+				},
+				cache,
+				identity
+			);
+			if (beautified && beautified.trim()) {
+				this.beautifyCache.invalidateNote(view.file.path);
+				editor.replaceRange(beautified, from, to);
+				new Notice('Selection beautified!');
+			} else {
+				new Notice('Failed to beautify selection.');
+			}
+		} catch (e) {
+			Logger.error('[Lumos] Beautify selection failed', e);
+			new Notice('Failed to beautify selection. Check console.');
+		}
+	}
+
+	async clearBeautifyCaches() {
+		await this.visionCache.clear();
+		await this.beautifyCache.clear();
+		new Notice('Cleared beautify & vision caches.');
 	}
 
 	async onload() {
@@ -180,52 +329,19 @@ export default class LumosPlugin extends Plugin {
 		this.addCommand({
 			id: 'beautify-current-page',
 			name: 'Beautify Current Page',
-			callback: async () => {
-				const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (!view) {
-					new Notice('No active Markdown view found.');
-					return;
-				}
+			callback: () => void this.runBeautifyPage(false)
+		});
 
-				const editor = view.editor;
-				const text = editor.getValue();
-				if (!text.trim()) {
-					new Notice('Page is empty.');
-					return;
-				}
+		this.addCommand({
+			id: 'beautify-selected-block',
+			name: 'Beautify Selected Block',
+			callback: () => void this.runBeautifySelection()
+		});
 
-				new Notice('Beautifying page...');
-				try {
-					const host: BeautifyHost = {
-						resolveEmbed: (linkPath, sourcePath) =>
-							this.app.metadataCache.getFirstLinkpathDest(linkPath, sourcePath),
-						transcribeImage: (file) => this.visionExtractor.extractImageText(file as TFile),
-						retrieveRelated: (query, topK, excludeFilePath) =>
-							this.hybridRetriever
-								.retrieve({ query, topK, excludeFilePath })
-								.then(results => results.map(r => ({ filePath: r.filePath, text: r.text }))),
-						beautifyViaLLM: (payload, opts) =>
-							this.llmService.beautifyText(payload, {
-								relatedNotes: opts.relatedNotes,
-								imageCaptions: opts.imageCaptions,
-							}),
-					};
-					const beautifiedText = await beautifyNote(text, view.file.path, host, {
-						relatedNotes: this.settings.beautifyAddRelatedNotes,
-						imageCaptions: this.settings.beautifyAddImageCaptions,
-						relatedTopK: this.settings.beautifyRelatedTopK,
-					});
-					if (beautifiedText && beautifiedText.trim()) {
-						editor.setValue(beautifiedText);
-						new Notice('Page beautified!');
-					} else {
-						new Notice('Failed to beautify: LLM returned empty text.');
-					}
-				} catch (e) {
-					Logger.error('[Lumos] Beautify failed', e);
-					new Notice('Failed to beautify page. Check console.');
-				}
-			}
+		this.addCommand({
+			id: 'force-beautify-current-page',
+			name: 'Force Beautify Current Page',
+			callback: () => void this.runBeautifyPage(true)
 		});
 
 		this.addCommand({
@@ -368,6 +484,10 @@ export default class LumosPlugin extends Plugin {
 		this.parser = new Parser(this.app);
 		this.llmTransport = createTransport(this.settings);
 		this.llmService = new LLMService(this.llmTransport);
+		this.visionCache = new VisionCache(this);
+		await this.visionCache.load();
+		this.beautifyCache = new BeautifyCache(this);
+		await this.beautifyCache.load();
 		this.vectorStore = new VectorStore(this);
 		await this.vectorStore.load();
 
@@ -391,7 +511,7 @@ export default class LumosPlugin extends Plugin {
 				} catch {
 					script = undefined;
 				}
-				return createBlobWorkerBackend(script ?? WORKER_SCRIPT);
+				return createBlobWorkerBackend(script ?? WORKER_SCRIPT, dir);
 			} catch (e) {
 				Logger.warn('[Lumos] Reranker worker unavailable:', e);
 				return null;
@@ -415,7 +535,7 @@ export default class LumosPlugin extends Plugin {
 		this.relationExtractor = new RelationExtractor(this);
 		this.backlinkManager = new BacklinkManager(this.app, this.settings);
 		this.scoringEngine = new ScoringEngine(this.app);
-		this.visionExtractor = new VisionExtractor(this.app, this.llmTransport);
+		this.visionExtractor = new VisionExtractor(this.app, this.llmTransport, this.visionCache);
 		this.localOcr = new LocalOcr(this.app);
 		this.userProfileManager = new UserProfileManager(this.app, this);
 		
@@ -433,6 +553,7 @@ export default class LumosPlugin extends Plugin {
 			if (deleted) {
 				await this.vectorStore.delete(file.path);
 				await this.relationStore.deleteEdges(file.path);
+				this.beautifyCache.invalidateNote(file.path);
 			} else {
 				await this.indexer.enqueueAndRun(file);
 			}
@@ -441,6 +562,7 @@ export default class LumosPlugin extends Plugin {
 		this.watcher.onRename(async (file: TFile, oldPath: string) => {
 			await this.vectorStore.renameFile(oldPath, file.path);
 			await this.relationStore.renameFile(oldPath, file.path);
+			this.beautifyCache.invalidateNote(oldPath);
 			this.activateView();
 		});
 

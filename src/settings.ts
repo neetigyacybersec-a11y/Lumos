@@ -167,6 +167,25 @@ export class RelationSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
+		new Setting(containerEl)
+			.setName('Cache Beautify Results')
+			.setDesc('Reuse previously-captioned images, beautified blocks, and whole-page beautifies across sessions so unchanged pages cost zero tokens. Results are keyed by file content and model, so they expire automatically when either changes.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.beautifyCacheEnabled)
+				.onChange(async (value) => {
+					this.plugin.settings.beautifyCacheEnabled = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Clear Beautify & Vision Cache')
+			.setDesc('Delete every cached image transcription and beautified result. The next run re-calls the LLM for the affected pages.')
+			.addButton(button => button
+				.setButtonText('Clear cache')
+				.onClick(async () => {
+					await this.plugin.clearBeautifyCaches();
+				}));
+
 		containerEl.createEl('h3', {text: 'AI User Profile', cls: 'setting-item-heading'});
 
 		new Setting(containerEl)

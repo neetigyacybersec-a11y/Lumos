@@ -15,9 +15,20 @@ let tokenizer: any = null;
 let model: any = null;
 let loadedId = '';
 
-async function ensureModel(modelId: string) {
+function applyCacheDir(tf: any, cacheDir?: string) {
+    if (!cacheDir) return;
+    try {
+        tf.env.cacheDir = cacheDir;
+        tf.env.useFSCache = true;
+    } catch (e) {
+        // Electron worker FS may be unavailable; a cache miss only re-downloads.
+    }
+}
+
+async function ensureModel(modelId: string, cacheDir?: string) {
     if (loadedId === modelId) return;
     const tf: any = await import('@huggingface/transformers');
+    applyCacheDir(tf, cacheDir);
     // Surface transformers.js download/load progress to the main thread so the
     // UI can show the user what is happening instead of looking like a freeze.
     const progress = (info: any) => {
@@ -65,12 +76,12 @@ ctx.onmessage = async (ev: MessageEvent) => {
     const msg = ev.data;
     try {
         if (msg.type === 'load') {
-            await ensureModel(msg.modelId);
+            await ensureModel(msg.modelId, msg.cacheDir);
             ctx.postMessage({ type: 'ready' });
             return;
         }
         if (msg.type !== 'rerank') return;
-        await ensureModel(msg.modelId);
+        await ensureModel(msg.modelId, msg.cacheDir);
         const scores: number[] = [];
         const BATCH = 16;
         for (let i = 0; i < msg.documents.length; i += BATCH) {
