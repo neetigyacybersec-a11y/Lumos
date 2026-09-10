@@ -3,3 +3,5 @@ main.js
 reranker.worker.js
 .agents/
 graphify-out/
+AGENTS.md
+docs/
