@@ -24,7 +24,7 @@ Each `reranker/<key>/` directory holds exactly the four files
 
 The ONNX runtime pair is pinned to `onnxruntime-web@1.26.0-dev.20260416-b7804b056c`,
 matching what `@huggingface/transformers` bundles. Re-pinning means replacing
-these two files and updating `ORT_WEB_VERSION` in `src/llm/modelStore.ts`.
+these two files and updating `ORT_WEB_VERSION` in `src/search/modelStore.ts`.
 
 ## URLs
 
