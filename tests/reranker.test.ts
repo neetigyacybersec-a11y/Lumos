@@ -204,6 +204,47 @@ describe('reranker model load retry', () => {
         expect(backend.load).toHaveBeenCalledTimes(2);
         expect(onUnavailable).toHaveBeenCalledTimes(1);
     });
+
+    it('REGRESSION: single-flights concurrent reranks onto one model load', async () => {
+        const loads: string[] = [];
+        const backend: any = {
+            load: vi.fn(async (modelId: string) => {
+                loads.push(modelId);
+                await new Promise((r) => setTimeout(r, 30));
+            }),
+            score: vi.fn(async (_q: string, docs: string[]) => docs.map(() => 1.2)),
+        };
+        const filesProvider = vi.fn(async () => ({ 'config.json': new ArrayBuffer(4) }));
+        const reranker = new Reranker(() => backend, false, undefined, undefined, { modelFileProvider: filesProvider });
+
+        const [a, b] = await Promise.all([
+            reranker.rerank('q', ['doc a'], 'mini'),
+            reranker.rerank('q', ['doc b'], 'mini'),
+        ]);
+
+        expect(a).toHaveLength(1);
+        expect(b).toHaveLength(1);
+        // Concurrent triggers (e.g. search + beautify) must not start a second download.
+        expect(loads).toEqual(['Xenova/ms-marco-MiniLM-L-6-v2']);
+        expect(filesProvider).toHaveBeenCalledTimes(1);
+        expect(backend.load).toHaveBeenCalledWith(
+            'Xenova/ms-marco-MiniLM-L-6-v2',
+            expect.objectContaining({ files: expect.any(Object) })
+        );
+    });
+
+    it('loads without local files when the provider returns null', async () => {
+        const backend: any = {
+            load: vi.fn(async () => {}),
+            score: vi.fn(async (_q: string, docs: string[]) => docs.map(() => 0.5)),
+        };
+        const reranker = new Reranker(() => backend, false, undefined, undefined, {
+            modelFileProvider: async () => null,
+        });
+        const scores = await reranker.rerank('q', ['doc'], 'mini');
+        expect(scores).toHaveLength(1);
+        expect(backend.load).toHaveBeenCalledWith('Xenova/ms-marco-MiniLM-L-6-v2', undefined);
+    });
 });
 
 	it('end-to-end: hybrid retrieval uses the blob-spawned reranker', async () => {

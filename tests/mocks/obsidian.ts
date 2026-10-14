@@ -16,7 +16,16 @@ export class PluginSettingTab {
         this.plugin = plugin;
     }
 }
+function mockEl(): any {
+    return {
+        empty() {}, setText() {}, addClass() {}, removeClass() {},
+        createEl: () => mockEl(), createDiv: () => mockEl(), createSpan: () => mockEl(),
+    };
+}
 export class Setting {
+    descEl: any = mockEl();
+    infoEl: any = mockEl();
+    buttonEl: any = mockEl();
     constructor(containerEl: any) {}
     setName() { return this; }
     setDesc() { return this; }
@@ -26,6 +35,15 @@ export class Setting {
     onChange() { return this; }
     addText(cb: any) { cb(this); return this; }
     setPlaceholder() { return this; }
+    addButton(cb: any) { cb(this); return this; }
+    setButtonText() { return this; }
+    onClick() { return this; }
+    addToggle(cb: any) { cb(this); return this; }
+    addSlider(cb: any) { cb(this); return this; }
+    setLimits() { return this; }
+    setDynamicTooltip() { return this; }
+    setWarning() { return this; }
+    setCta() { return this; }
 }
 export class Notice {
     constructor(public message?: any, public timeout?: number) {}

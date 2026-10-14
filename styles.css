@@ -306,3 +306,24 @@
     0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
     40% { transform: scale(1); opacity: 1; }
 }
+
+/* Provider settings: inline base-URL validation + connection probe feedback. */
+.lumos-base-url-feedback {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.lumos-base-url-feedback.mod-warning {
+    color: var(--text-error);
+}
+
+.lumos-connection-status {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    margin: -8px 0 12px 0;
+}
+
+.lumos-connection-status.mod-warning {
+    color: var(--text-error);
+}

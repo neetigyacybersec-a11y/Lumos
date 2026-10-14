@@ -1,6 +1,6 @@
 import { Logger } from './logger';
 import { Plugin, TFile, WorkspaceLeaf, MarkdownView, Notice, EditorPosition } from 'obsidian';
-import { PluginSettings, DEFAULT_SETTINGS } from './types';
+import { PluginSettings, resolveSettings } from './types';
 import { RelationSettingTab } from './settings';
 import { Watcher } from './watcher';
 import { Parser } from './parser';
@@ -24,6 +24,7 @@ import { LLMService } from './llmService';
 import { MirroredIndex } from './search/mirroredIndex';
 import { HybridRetriever } from './search/hybridRetriever';
 import { Reranker, createBlobWorkerBackend, type RerankerProgress } from './search/reranker';
+import { createLocalModelStore } from './search/modelStore';
 import { WORKER_SCRIPT } from './search/workerScript';
 import { RagAnswerer } from './ragAnswer';
 import { beautifyNote, beautifySelection, BeautifyHost, BeautifyIdentity } from './beautify';
@@ -108,7 +109,7 @@ export default class LumosPlugin extends Plugin {
 
 	private async beautifyIdentity(): Promise<BeautifyIdentity> {
 		const opts = JSON.stringify({
-			provider: this.llmTransport.provider,
+			format: this.llmTransport.format,
 			relatedNotes: this.settings.beautifyAddRelatedNotes,
 			imageCaptions: this.settings.beautifyAddImageCaptions,
 			relatedTopK: this.settings.beautifyRelatedTopK,
@@ -495,6 +496,8 @@ export default class LumosPlugin extends Plugin {
 		// optional local cross-encoder rerank (runs off the UI thread).
 		this.lexicalIndex = new MirroredIndex();
 		this.lexicalIndex.attach(this.vectorStore);
+		const modelsDir = this.manifest?.dir ? `${this.manifest.dir}/models` : '';
+		const modelStore = createLocalModelStore(this.app.vault.adapter as any, modelsDir);
 		const reranker = new Reranker(async () => {
 			try {
 				const dir = this.manifest?.dir || '';
@@ -522,6 +525,30 @@ export default class LumosPlugin extends Plugin {
 		}, (modelId) => {
 			new Notice('Lumos: downloading local reranker model (one-time)...', 10000);
 			Logger.info(`[Lumos] Downloading reranker model ${modelId}`);
+		}, {
+			modelFileProvider: async (modelId) => {
+				try {
+					// Persist weights under the plugin folder (main thread,
+					// bypassing Obsidian's app:// cache that stalls), then hand
+					// the bytes to the worker to load fully offline.
+					await modelStore.ensureLocalModel(modelId);
+					return await modelStore.readModelFiles(modelId);
+				} catch (e) {
+					Logger.warn('[Lumos] Reranker local model store unavailable:', e);
+					return null;
+				}
+			},
+			wasmProvider: async () => {
+				try {
+					// Mirror the ONNX wasm runtime too: the worker's last
+					// remaining network fetch (jsDelivr) stalls at app://.
+					await modelStore.ensureRuntime();
+					return await modelStore.readRuntimeFiles();
+				} catch (e) {
+					Logger.warn('[Lumos] Reranker onnx runtime unavailable:', e);
+					return null;
+				}
+			},
 		});
 		reranker.onProgress = (p) => {
 			this.renderRerankerProgress(p);
@@ -626,7 +653,7 @@ export default class LumosPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = resolveSettings(await this.loadData());
 	}
 
 	async saveSettings() {

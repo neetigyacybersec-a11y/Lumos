@@ -6,7 +6,7 @@ describe('Relation Extractor', () => {
 	it('constructs a prompt that contains source and candidate data', () => {
 		const mockPlugin = {
 			settings: {
-				provider: 'ollama',
+				apiFormat: 'ollama',
 				baseUrl: 'http://localhost:11434',
 				modelName: 'llama3'
 			}

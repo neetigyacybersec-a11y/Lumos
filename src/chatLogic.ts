@@ -38,7 +38,7 @@ export class ChatLogic {
                         const cleanQuery = searchDecision.replace(/["']/g, '').trim();
                         Logger.info('[ChatLogic] Smart RAG triggering search for:', cleanQuery);
                         // One retrieval policy, shared with searchView.
-                        const context = await this.plugin.ragAnswer.contextFor(cleanQuery, 3);
+                        const context = await this.plugin.ragAnswerer.contextFor(cleanQuery, 3);
                         if (context) {
                             retrievedContext = context;
                         }

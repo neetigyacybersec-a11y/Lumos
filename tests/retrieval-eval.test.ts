@@ -86,7 +86,7 @@ describe.skipIf(!RUN)('retrieval quality eval (LUMOS_EVAL=1)', () => {
                 enableHybridSearch: true,
                 rerankerModel: 'off',
                 rerankCandidates: 20,
-                provider: 'ollama',
+                apiFormat: 'ollama',
                 baseUrl: OLLAMA,
                 embeddingModelName: EMBED_MODEL,
             },

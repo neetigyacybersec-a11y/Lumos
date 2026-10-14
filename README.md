@@ -34,7 +34,7 @@ An intelligent, privacy-first Obsidian plugin that illuminates the connections h
 **Retrieval** is a two-stage cascade:
 
 1. **Fusion** — BM25 (`k1=1.2`, `b=0.75`) over chunk texts and dense cosine similarity each return up to 50 candidates; **Reciprocal Rank Fusion (`k=60`)** merges them by rank position, so incomparable score scales never need normalizing and nothing needs tuning.
-2. **Rerank** *(optional)* — the fused top-N go through a local ONNX cross-encoder (`Xenova/ms-marco-MiniLM-L-6-v2` or TinyBERT) running inside `reranker.worker.js`, off Obsidian's UI thread. If anything fails, Lumos silently falls back to pure fusion ranking.
+2. **Rerank** *(optional)* — the fused top-N go through a local ONNX cross-encoder (`Xenova/ms-marco-MiniLM-L-6-v2` or TinyBERT) running inside `reranker.worker.js`, off Obsidian's UI thread. Weights are mirrored on this repo's `models` branch, so nothing is fetched from third-party CDNs. If anything fails, Lumos silently falls back to pure fusion ranking.
 
 **Indexing is incremental and cheap:** unchanged files are skipped by content hash; when a file changes, only chunks whose text actually changed get re-embedded, and only those changed excerpts go to the LLM for relation extraction. Empty or temporarily-failed files persist a marker row so they are never reprocessed on every startup.
 
@@ -72,17 +72,21 @@ Open **Settings → Lumos**.
 
 ### LLM Backend
 
-| Provider | Notes |
-|---|---|
-| **Ollama (Local)** | 100% private, free. Install [Ollama](https://ollama.com), keep it running at `http://127.0.0.1:11434`, pick a chat model (`llama3`, `mistral`, ...) and an embedding model (`nomic-embed-text`). |
-| **OpenRouter (Cloud)** | State-of-the-art models (`openai/gpt-4o-mini`, `anthropic/claude-3-haiku`, ...). Enter your OpenRouter API key; embeddings default to `openai/text-embedding-3-small`. |
+Pick the **API Format** — the wire protocol — then point **Base URL** at any endpoint that speaks it.
+
+| Format | Example Base URL | Notes |
+|---|---|---|
+| **Ollama (native)** | `http://localhost:11434` | 100% private, free. Install [Ollama](https://ollama.com), keep it running, pick a chat model (`llama3`, `mistral`, ...) and an embedding model (`nomic-embed-text`). |
+| **OpenAI-compatible** | `https://openrouter.ai/api/v1` | Works with OpenRouter, TokenRouter, LM Studio, vLLM, Groq, together.ai — any host exposing `/chat/completions` and `/embeddings`. Include the `/v1` suffix where the provider requires it. |
+
+The Base URL accepts **any** http(s) host. It is validated as you type (missing scheme, stray spaces, or pasting a full endpoint path such as `…/chat/completions` are all caught), and **Test connection** fires one lightweight request and reports what happened — reachable, auth rejected, wrong path, or unreachable host. Leave **API Key** blank for endpoints that need no authentication.
 
 A vision model is used to read text inside image notes (e.g. `llava` locally, `openai/gpt-4o-mini` in the cloud).
 
 ### Hybrid Search & Reranking
 
 - **Enable Hybrid Search** *(default: on)* — BM25 + vector fusion. Free, offline, no models to download.
-- **Local Reranker** *(default: off)* — `Fast (~4MB TinyBERT)` or `Accurate (~23MB MiniLM)`. English-only. The model downloads once from Hugging Face on first search, then runs offline in a worker.
+- **Local Reranker** *(default: off)* — `Fast (~4MB TinyBERT)` or `Accurate (~23MB MiniLM)`. English-only. The model downloads once from this project's `models` branch on first search, then runs offline in a worker.
 - **Rerank Depth** — how many fused candidates get re-scored (5–50).
 
 ### Privacy & Exclusions
@@ -123,7 +127,7 @@ Only edges above your **Display Threshold** are shown by default; the rest hide 
 
 - **Something indexed wrong / model changed?** Run *Clear Index and Re-scan Vault*.
 - **A file keeps failing** (bad PDF, vision hiccup)? It is marked failed once, then retried on demand via *Retry Failed/Empty Files* — never in a costly loop at startup.
-- **Reranker not applying?** Check that `reranker.worker.js` is present next to `main.js`; the first search after enabling downloads the model (~4–23MB) from Hugging Face. Any failure falls back to fusion ranking automatically.
+- **Reranker not applying?** Check that `reranker.worker.js` is present next to `main.js`; the first search after enabling downloads the model (~4–23MB) plus the ONNX runtime (~13MB) from the `models` branch of this repo. Any failure falls back to fusion ranking automatically.
 - **Debugging**: enable logs via *Settings → Open Debug Log* (`lumos-debug.log` inside the plugin folder).
 
 ## Development
@@ -152,7 +156,7 @@ src/
 ├── indexer.ts            background queue, incremental chunk indexing, retries
 ├── watcher.ts            vault event debounce
 ├── parser.ts             markdown/PDF extraction
-├── embeddings.ts         chunking + embedding calls (Ollama/OpenRouter)
+├── embeddings.ts         chunking + embedding calls (any configured provider)
 ├── vectorStore.ts        IndexedDB persistence, cosine search, mutation hooks
 ├── search/
 │   ├── lexicalIndex.ts   dependency-free BM25 inverted index

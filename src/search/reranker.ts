@@ -8,7 +8,10 @@ export const RERANKER_MODEL_IDS: Record<RerankerModelKey, string> = {
 };
 
 export interface RerankBackend {
-    load(modelId: string): Promise<void>;
+    load(
+        modelId: string,
+        opts?: { files?: Record<string, ArrayBuffer>; runtime?: Record<string, ArrayBuffer> }
+    ): Promise<void>;
     score(query: string, documents: string[]): Promise<number[]>;
     /** Optional hook the backend calls with download/load progress updates. */
     setOnLoadProgress?(cb?: (progress: RerankerProgress) => void): void;
@@ -24,6 +27,21 @@ export type RerankerProgress = {
     total?: number | null;
 };
 
+export type RerankerOptions = {
+    /**
+     * Supplies the model bytes (persisted to disk by the main thread) for the
+     * worker to load fully offline. Returning null falls back to the worker's
+     * network/cache path.
+     */
+    modelFileProvider?: (modelId: string) => Promise<Record<string, ArrayBuffer> | null>;
+    /**
+     * Supplies the ONNX Runtime wasm factory + binary mirror, so the worker
+     * never fetches them from jsDelivr (which stalls at Obsidian's app://
+     * origin exactly like the model fetch did).
+     */
+    wasmProvider?: (modelId: string) => Promise<Record<string, ArrayBuffer> | null>;
+};
+
 /**
  * Main-thread handle over the ONNX cross-encoder running inside
  * reranker.worker.js. Any failure degrades permanently to null results so
@@ -34,6 +52,9 @@ export class Reranker {
     private loadedKey: string | null = null;
     private loadAttempts = 0;
     private failed = false;
+    /** Shared while a model load is in flight so concurrent reranks reuse it. */
+    private inflight: Promise<void> | null = null;
+    private options: RerankerOptions;
     /** Attach from the host to observe download/load progress. */
     onProgress: ((progress: RerankerProgress) => void) | null = null;
 
@@ -41,12 +62,43 @@ export class Reranker {
         private createBackend?: (() => RerankBackend | null | Promise<RerankBackend | null>) | null,
         private allowInline: boolean = false,
         private onUnavailable?: () => void,
-        private onModelLoad?: (modelId: string) => void
-    ) {}
+        private onModelLoad?: (modelId: string) => void,
+        options: RerankerOptions = {}
+    ) {
+        this.options = options;
+    }
 
     private attachProgress(backend: RerankBackend) {
         if (typeof backend.setOnLoadProgress === 'function') {
             backend.setOnLoadProgress((p) => this.onProgress?.(p));
+        }
+    }
+
+    private async loadWithFiles(modelId: string): Promise<void> {
+        const files = await this.options.modelFileProvider?.(modelId);
+        const runtime = await this.options.wasmProvider?.(modelId);
+        const opts = files || runtime ? { files: files ?? undefined, runtime: runtime ?? undefined } : undefined;
+        await this.backend!.load(modelId, opts);
+    }
+
+    private async performLoad(modelId: string): Promise<void> {
+        this.onModelLoad?.(modelId);
+        try {
+            try {
+                await this.loadWithFiles(modelId);
+            } catch (loadErr) {
+                // One automatic retry: an aborted first attempt (stall
+                // watchdog or worker hiccup) is frequently a transient
+                // blip; a second failure disables the backend for good.
+                if (this.loadAttempts >= 1) throw loadErr;
+                this.loadAttempts++;
+                Logger.warn('[Lumos] Reranker model load failed once, retrying…', loadErr);
+                await this.loadWithFiles(modelId);
+            }
+            this.loadedKey = modelId;
+            this.loadAttempts = 0;
+        } finally {
+            this.inflight = null;
         }
     }
 
@@ -73,22 +125,13 @@ export class Reranker {
             }
             const modelId = RERANKER_MODEL_IDS[modelKey];
             if (this.loadedKey !== modelId) {
-                // First load downloads weights (~4-23MB); surface it so a slow
-                // download never reads as a silent freeze.
-                this.onModelLoad?.(modelId);
-                try {
-                    await this.backend.load(modelId);
-                } catch (loadErr) {
-                    // One automatic retry: an aborted first attempt (stall
-                    // watchdog or worker hiccup) is frequently a transient
-                    // blip; a second failure disables the backend for good.
-                    if (this.loadAttempts >= 1) throw loadErr;
-                    this.loadAttempts++;
-                    Logger.warn('[Lumos] Reranker model load failed once, retrying…', loadErr);
-                    await this.backend.load(modelId);
+                // Single-flight: the first rerank downloads/loads the model;
+                // concurrent reranks (e.g. search + beautify firing together)
+                // await the same promise instead of restarting the download.
+                if (!this.inflight) {
+                    this.inflight = this.performLoad(modelId);
                 }
-                this.loadedKey = modelId;
-                this.loadAttempts = 0;
+                await this.inflight;
             }
             const logits = await this.backend.score(query, documents);
             return logits.map(sigmoid);
@@ -148,7 +191,7 @@ class WorkerBackend implements RerankBackend {
         this.onLoadProgress = cb ?? null;
     }
 
-    async load(modelId: string): Promise<void> {
+    async load(modelId: string, opts?: { files?: Record<string, ArrayBuffer>; runtime?: Record<string, ArrayBuffer> }): Promise<void> {
         // First load downloads model weights (~4-23MB). A flat wall-clock cap
         // aborts real downloads on slow links, so instead watch for *stalls*:
         // tolerate any activity, only give up when there is none for a while.
@@ -180,7 +223,25 @@ class WorkerBackend implements RerankBackend {
         const maxTimer = setTimeout(() => abort('model load exceeded time budget'), MAX_LOAD_MS);
 
         try {
-            this.post({ type: 'load', modelId, cacheDir: this.cacheDir });
+            const files = opts?.files;
+            const runtime = opts?.runtime;
+            let transfer: ArrayBuffer[] = [];
+            if (files) {
+                transfer.push(...Object.values(files));
+            }
+            if (runtime) {
+                transfer.push(...Object.values(runtime));
+            }
+            this.post(
+                {
+                    type: 'load',
+                    modelId,
+                    cacheDir: this.cacheDir,
+                    ...(files ? { files } : {}),
+                    ...(runtime ? { runtime } : {}),
+                },
+                transfer
+            );
             await ready;
         } finally {
             clearTimeout(firstTimer);
@@ -197,9 +258,13 @@ class WorkerBackend implements RerankBackend {
         this.worker.terminate();
     }
 
-    private post(payload: any) {
+    private post(payload: any, transfer?: ArrayBuffer[]) {
         const id = this.nextId++;
-        this.worker.postMessage({ id, ...payload });
+        if (transfer && transfer.length > 0) {
+            this.worker.postMessage({ id, ...payload }, transfer);
+        } else {
+            this.worker.postMessage({ id, ...payload });
+        }
         return id;
     }
 
@@ -232,6 +297,12 @@ class WorkerBackend implements RerankBackend {
                 loaded: msg.loaded,
                 total: msg.total,
             });
+            return;
+        }
+        if (msg?.type === 'debug') {
+            Logger.info(`[Lumos] [worker] stage: ${msg.stage}`);
+            this.sawAnyProgress = true;
+            this.lastActivity = Date.now();
             return;
         }
         if (msg?.type === 'error' && !msg.id) {

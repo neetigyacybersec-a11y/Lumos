@@ -1,12 +1,15 @@
 import { requestUrl } from 'obsidian';
+import { ApiFormat, normalizeBaseUrl, validateBaseUrl, isOpenRouterUrl } from './providerConfig';
 
 /**
- * The single LLM provider seam. Every Ollama-vs-OpenRouter protocol detail —
- * URL shapes, auth headers, payload field names, response unwrapping, model
- * fallbacks, timeouts and the error taxonomy — lives here, once.
+ * The single LLM provider seam. Every protocol detail — URL shapes, auth
+ * headers, payload field names, response unwrapping, model fallbacks, timeouts
+ * and the error taxonomy — lives here, once.
  *
- * Two adapters exist today (Ollama local, OpenRouter cloud), which is what
- * makes this a real seam rather than a hypothetical one.
+ * Two formats exist (Ollama native, OpenAI-compatible), which is what makes
+ * this a real seam rather than a hypothetical one. The format describes the
+ * *protocol*; the base URL may point at any host (OpenRouter, TokenRouter,
+ * LM Studio, vLLM, Groq, …) as long as it speaks that protocol.
  */
 
 export interface ChatMessage {
@@ -46,11 +49,11 @@ export function withApiTimeout<T>(promise: Promise<T>, timeoutSec: number, label
 }
 
 function joinUrl(baseUrl: string, path: string): string {
-    return baseUrl.replace(/\/$/, '') + path;
+    return normalizeBaseUrl(baseUrl) + path;
 }
 
 export interface ProviderSettings {
-    provider: 'ollama' | 'openrouter';
+    apiFormat: ApiFormat;
     baseUrl: string;
     apiKey?: string;
     llmModelName: string;
@@ -60,37 +63,50 @@ export interface ProviderSettings {
 }
 
 const OLLAMA_CHAT_FALLBACK = 'llama3';
-const OPENROUTER_CHAT_FALLBACK = 'meta-llama/llama-3-8b-instruct';
+const OPENAI_CHAT_FALLBACK = 'meta-llama/llama-3-8b-instruct';
 const OLLAMA_EMBED_FALLBACK = 'nomic-embed-text';
-const OPENROUTER_EMBED_FALLBACK = 'openai/text-embedding-3-small';
+const OPENAI_EMBED_FALLBACK = 'openai/text-embedding-3-small';
 const OLLAMA_VISION_FALLBACK = 'llava';
-const OPENROUTER_VISION_FALLBACK = 'openai/gpt-4o-mini';
+const OPENAI_VISION_FALLBACK = 'openai/gpt-4o-mini';
+
+/**
+ * Headers for an OpenAI-compatible request. Auth is only sent when a key is
+ * configured (many local gateways need none), and the OpenRouter attribution
+ * headers are only attached when the host actually is OpenRouter.
+ */
+export function providerAuthHeaders(settings: { apiKey?: string; baseUrl: string }): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
+    if (isOpenRouterUrl(settings.baseUrl)) {
+        headers['HTTP-Referer'] = 'https://github.com/obsidianmd/obsidian-api';
+        headers['X-Title'] = 'Obsidian Relation Plugin';
+    }
+    return headers;
+}
 
 export interface ChatOptions {
     expectJson?: boolean;
 }
 
-export type StreamProvider = 'ollama' | 'openrouter';
-
 /**
  * Decodes one SSE/NDJSON line into its text delta.
  *
  * `ollama` lines are plain JSON lumps (`{"message":{"content":"..."}}`);
- * `openrouter` lines are `data: {json}` with a `data: [DONE]` terminator.
+ * `openai` lines are `data: {json}` with a `data: [DONE]` terminator.
  * Returns an empty string for lines that carry no text (keep-alives,
  * partial/non-JSON noise, or the [DONE] marker).
  */
-export function parseSSELine(raw: string, provider: StreamProvider): string {
+export function parseSSELine(raw: string, format: ApiFormat): string {
     const trimmed = raw.trim();
     if (!trimmed) return '';
-    if (provider !== 'ollama' && trimmed === 'data: [DONE]') return '';
+    if (format !== 'ollama' && trimmed === 'data: [DONE]') return '';
     try {
         const parsed = JSON.parse(
-            provider !== 'ollama' && trimmed.startsWith('data: ')
+            format !== 'ollama' && trimmed.startsWith('data: ')
                 ? trimmed.slice(6)
                 : trimmed
         );
-        const delta = provider === 'ollama'
+        const delta = format === 'ollama'
             ? parsed.message?.content
             : parsed.choices?.[0]?.delta?.content;
         return typeof delta === 'string' ? delta : '';
@@ -106,20 +122,20 @@ export function parseSSELine(raw: string, provider: StreamProvider): string {
  */
 export function drainBuffer(
     buffer: string,
-    provider: StreamProvider,
+    format: ApiFormat,
     onDelta: (delta: string) => void
 ): { leftover: string; done: boolean } {
     const lines = buffer.split('\n');
     const leftover = lines.pop() ?? '';
     for (const line of lines) {
-        const delta = parseSSELine(line, provider);
+        const delta = parseSSELine(line, format);
         if (delta) onDelta(delta);
     }
     return { leftover, done: leftover.length === 0 };
 }
 
 export interface LLMTransport {
-    readonly provider: 'ollama' | 'openrouter';
+    readonly format: ApiFormat;
     readonly llmModelName: string;
     readonly visionModelName: string;
     chat(messages: ChatMessage[], opts?: ChatOptions): Promise<string>;
@@ -136,8 +152,8 @@ export interface LLMTransport {
 class RestTransport implements LLMTransport {
     constructor(private settings: ProviderSettings) {}
 
-    get provider(): 'ollama' | 'openrouter' {
-        return this.settings.provider;
+    get format(): ApiFormat {
+        return this.settings.apiFormat;
     }
 
     get llmModelName(): string {
@@ -152,18 +168,12 @@ class RestTransport implements LLMTransport {
         return this.settings.requestTimeoutSec || 60;
     }
 
-    private openrouterHeaders(): Record<string, string> {
-        return {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.settings.apiKey}`,
-            // OpenRouter attribution headers; harmless elsewhere but only sent here.
-            'HTTP-Referer': 'https://github.com/obsidianmd/obsidian-api',
-            'X-Title': 'Obsidian Relation Plugin',
-        };
+    private authHeaders(): Record<string, string> {
+        return providerAuthHeaders(this.settings);
     }
 
     async chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
-        if (this.settings.provider === 'ollama') {
+        if (this.settings.apiFormat === 'ollama') {
             const body: any = {
                 model: this.settings.llmModelName || OLLAMA_CHAT_FALLBACK,
                 messages,
@@ -190,7 +200,7 @@ class RestTransport implements LLMTransport {
         }
 
         const body: any = {
-            model: this.settings.llmModelName || OPENROUTER_CHAT_FALLBACK,
+            model: this.settings.llmModelName || OPENAI_CHAT_FALLBACK,
             messages,
         };
         if (opts.expectJson) body.response_format = { type: 'json_object' };
@@ -198,7 +208,7 @@ class RestTransport implements LLMTransport {
             const res = await withApiTimeout(requestUrl({
                 url: joinUrl(this.settings.baseUrl, '/chat/completions'),
                 method: 'POST',
-                headers: this.openrouterHeaders(),
+                headers: this.authHeaders(),
                 body: JSON.stringify(body),
                 throw: false,
             }), this.timeoutSec(), 'LLM request');
@@ -216,14 +226,14 @@ class RestTransport implements LLMTransport {
     }
 
     async chatStream(messages: ChatMessage[], onChunk: (chunk: string) => void): Promise<string> {
-        const isOllama = this.settings.provider === 'ollama';
+        const isOllama = this.settings.apiFormat === 'ollama';
         const url = isOllama
             ? joinUrl(this.settings.baseUrl, '/api/chat')
             : joinUrl(this.settings.baseUrl, '/chat/completions');
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (!isOllama) Object.assign(headers, this.openrouterHeaders());
+        if (!isOllama) Object.assign(headers, this.authHeaders());
         const body = JSON.stringify({
-            model: this.settings.llmModelName || (isOllama ? OLLAMA_CHAT_FALLBACK : OPENROUTER_CHAT_FALLBACK),
+            model: this.settings.llmModelName || (isOllama ? OLLAMA_CHAT_FALLBACK : OPENAI_CHAT_FALLBACK),
             messages,
             stream: true,
         });
@@ -232,11 +242,11 @@ class RestTransport implements LLMTransport {
             const res = await fetch(url, { method: 'POST', headers, body });
             if (!res.ok || !res.body) {
                 const text = await res.text().catch(() => '');
-                throw new TransientApiError(`${this.settings.provider} stream failed (${res.status}): ${text}`);
+                throw new TransientApiError(`${this.settings.apiFormat} stream failed (${res.status}): ${text}`);
             }
             const reader = res.body.getReader();
             // Cap time-to-first-chunk only; long generations stream freely.
-            const first = await withApiTimeout(reader.read(), this.timeoutSec(), `${this.settings.provider} stream first chunk`);
+            const first = await withApiTimeout(reader.read(), this.timeoutSec(), `${this.settings.apiFormat} stream first chunk`);
             const decoder = new TextDecoder();
             let buffer = decoder.decode(first.value ?? { stream: true }, { stream: true });
             let done = first.done;
@@ -245,22 +255,22 @@ class RestTransport implements LLMTransport {
             const emit = (delta: string) => { full += delta; onChunk(delta); };
 
             while (!done) {
-                const { leftover } = drainBuffer(buffer, isOllama ? 'ollama' : 'openrouter', emit);
+                const { leftover } = drainBuffer(buffer, isOllama ? 'ollama' : 'openai', emit);
                 buffer = leftover;
                 const next = await reader.read();
                 done = next.done;
                 if (next.value) buffer += decoder.decode(next.value, { stream: true });
             }
-            if (buffer) drainBuffer(buffer, isOllama ? 'ollama' : 'openrouter', emit);
+            if (buffer) drainBuffer(buffer, isOllama ? 'ollama' : 'openai', emit);
             return full;
         } catch (e) {
             if (e instanceof TerminalApiError || e instanceof TransientApiError) throw e;
-            throw new TransientApiError(`${this.settings.provider} stream failed: ${e.message}`);
+            throw new TransientApiError(`${this.settings.apiFormat} stream failed: ${e.message}`);
         }
     }
 
     async embed(text: string): Promise<number[]> {
-        if (this.settings.provider === 'ollama') {
+        if (this.settings.apiFormat === 'ollama') {
             try {
                 const res = await withApiTimeout(requestUrl({
                     url: joinUrl(this.settings.baseUrl, '/api/embeddings'),
@@ -287,12 +297,9 @@ class RestTransport implements LLMTransport {
             const res = await withApiTimeout(requestUrl({
                 url: joinUrl(this.settings.baseUrl, '/embeddings'),
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${this.settings.apiKey}`,
-                },
+                headers: this.authHeaders(),
                 body: JSON.stringify({
-                    model: this.settings.embeddingModelName || OPENROUTER_EMBED_FALLBACK,
+                    model: this.settings.embeddingModelName || OPENAI_EMBED_FALLBACK,
                     input: text,
                 }),
                 throw: false,
@@ -309,7 +316,7 @@ class RestTransport implements LLMTransport {
     }
 
     async vision(prompt: string, imageBase64: string, mimeType: string): Promise<string> {
-        if (this.settings.provider === 'ollama') {
+        if (this.settings.apiFormat === 'ollama') {
             const res = await withApiTimeout(requestUrl({
                 url: joinUrl(this.settings.baseUrl, '/api/generate'),
                 method: 'POST',
@@ -331,9 +338,9 @@ class RestTransport implements LLMTransport {
         const res = await withApiTimeout(requestUrl({
             url: joinUrl(this.settings.baseUrl, '/chat/completions'),
             method: 'POST',
-            headers: this.openrouterHeaders(),
+            headers: this.authHeaders(),
             body: JSON.stringify({
-                model: this.settings.visionModelName || OPENROUTER_VISION_FALLBACK,
+                model: this.settings.visionModelName || OPENAI_VISION_FALLBACK,
                 messages: [{
                     role: 'user',
                     content: [
@@ -354,4 +361,75 @@ class RestTransport implements LLMTransport {
 
 export function createTransport(settings: ProviderSettings): LLMTransport {
     return new RestTransport(settings);
+}
+
+/** Minimal shape of Obsidian's `requestUrl`, injectable for tests. */
+export type RequestUrlFn = (req: {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    throw?: boolean;
+}) => Promise<{ status: number; text?: string; json?: any }>;
+
+export interface ConnectionResult {
+    ok: boolean;
+    message: string;
+    /** Model ids reported by the endpoint, when it lists them. */
+    models?: string[];
+}
+
+export type ConnectionSettings = Pick<ProviderSettings, 'apiFormat' | 'baseUrl' | 'apiKey' | 'requestTimeoutSec'>;
+
+function extractModelIds(format: ApiFormat, json: any): string[] {
+    if (format === 'ollama') {
+        return Array.isArray(json?.models) ? json.models.map((m: any) => m?.name).filter(Boolean) : [];
+    }
+    return Array.isArray(json?.data) ? json.data.map((m: any) => m?.id).filter(Boolean) : [];
+}
+
+function describeHttpFailure(status: number, body: string): string {
+    const detail = body ? ` — ${body}` : '';
+    if (status === 401 || status === 403) return `Authentication failed (HTTP ${status}). Check your API key.`;
+    if (status === 404) return `Endpoint not found (HTTP 404). Check the base URL — OpenAI-compatible APIs usually end in /v1. Some gateways don't expose /models even when chat works.`;
+    if (status === 429) return `Rate limited (HTTP 429). Try again shortly.`;
+    return `Server returned HTTP ${status}${detail}`;
+}
+
+/**
+ * Probes the configured endpoint with a cheap GET (Ollama `/api/tags`,
+ * OpenAI-compatible `/models`) and turns the outcome into a message a user can
+ * act on — the "report the error" half of base-URL validation. Never throws:
+ * a malformed URL, an unreachable host and an HTTP failure all come back as a
+ * structured result so the settings UI can render it inline.
+ */
+export async function testProviderConnection(
+    settings: ConnectionSettings,
+    requestFn: RequestUrlFn = requestUrl as unknown as RequestUrlFn
+): Promise<ConnectionResult> {
+    const validation = validateBaseUrl(settings.baseUrl);
+    if (!validation.ok) return { ok: false, message: validation.error };
+
+    const isOllama = settings.apiFormat === 'ollama';
+    const url = joinUrl(validation.url, isOllama ? '/api/tags' : '/models');
+
+    try {
+        const res = await withApiTimeout(requestFn({
+            url,
+            method: 'GET',
+            headers: isOllama ? { 'Content-Type': 'application/json' } : providerAuthHeaders(settings),
+            throw: false,
+        }), settings.requestTimeoutSec || 60, 'Connection test');
+
+        if (res.status !== 200) {
+            return { ok: false, message: describeHttpFailure(res.status, (res.text ?? '').slice(0, 200)) };
+        }
+
+        const models = extractModelIds(settings.apiFormat, res.json);
+        const message = models.length
+            ? `Connected. ${models.length} model${models.length === 1 ? '' : 's'} available.`
+            : 'Connected, but the endpoint listed no models — check your model names.';
+        return { ok: true, message, models };
+    } catch (e) {
+        return { ok: false, message: `Could not reach ${url}: ${e?.message ?? e}` };
+    }
 }

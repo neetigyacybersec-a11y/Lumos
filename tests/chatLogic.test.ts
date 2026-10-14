@@ -12,7 +12,7 @@ function makePort(overrides: Partial<ChatPort> = {}): ChatPort & { llmCalls: any
             return isDecider ? 'nuclear reactor safety' : 'the response';
         }),
     };
-    const ragAnswer: any = {
+    const ragAnswerer: any = {
         contextFor: vi.fn(async (query: string, topK?: number) => {
             contextCalls.push({ query, topK });
             return '[Source: safety.md]\nLiquid fluoride thorium reactors are intrinsically safe.';
@@ -22,7 +22,7 @@ function makePort(overrides: Partial<ChatPort> = {}): ChatPort & { llmCalls: any
         app: { vault: { read: vi.fn(async () => 'focused note content'), getAbstractFileByPath: vi.fn(() => null) } },
         settings: { userProfilePath: 'profile.md' },
         llmService,
-        ragAnswer,
+        ragAnswerer,
         activityLog: [],
         ...overrides,
         // keep the spies reachable regardless of overrides

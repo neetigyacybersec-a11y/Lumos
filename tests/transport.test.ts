@@ -2,13 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { parseSSELine, drainBuffer } from '../src/llm/transport';
 
 describe('parseSSELine', () => {
-	it('decodes an openrouter data: JSON delta', () => {
+	it('decodes an OpenAI-compatible data: JSON delta', () => {
 		const line = 'data: {"choices":[{"delta":{"content":"Hello"}}]}';
-		expect(parseSSELine(line, 'openrouter')).toBe('Hello');
+		expect(parseSSELine(line, 'openai')).toBe('Hello');
 	});
 
-	it('ignores the openrouter [DONE] marker', () => {
-		expect(parseSSELine('data: [DONE]', 'openrouter')).toBe('');
+	it('ignores the OpenAI-compatible [DONE] marker', () => {
+		expect(parseSSELine('data: [DONE]', 'openai')).toBe('');
 	});
 
 	it('decodes an ollama JSON lump', () => {
@@ -17,14 +17,14 @@ describe('parseSSELine', () => {
 	});
 
 	it('returns empty for keep-alive / non-JSON noise and blank lines', () => {
-		expect(parseSSELine('', 'openrouter')).toBe('');
-		expect(parseSSELine(': ping', 'openrouter')).toBe('');
+		expect(parseSSELine('', 'openai')).toBe('');
+		expect(parseSSELine(': ping', 'openai')).toBe('');
 		expect(parseSSELine('not json', 'ollama')).toBe('');
-		expect(parseSSELine('   ', 'openrouter')).toBe('');
+		expect(parseSSELine('   ', 'openai')).toBe('');
 	});
 
 	it('returns empty when the delta carries no text', () => {
-		expect(parseSSELine('data: {"choices":[{"delta":{"role":"assistant"}}]}', 'openrouter')).toBe('');
+		expect(parseSSELine('data: {"choices":[{"delta":{"role":"assistant"}}]}', 'openai')).toBe('');
 		expect(parseSSELine('{"done":true}', 'ollama')).toBe('');
 	});
 });
@@ -34,7 +34,7 @@ describe('drainBuffer', () => {
 		const deltas: string[] = [];
 		const { leftover, done } = drainBuffer(
 			'data: {"choices":[{"delta":{"content":"a"}}]}\ndata: {"choices":[{"delta":{"content":"b"}}]}\ndata: {"choices":[{"delta":{"conte',
-			'openrouter',
+			'openai',
 			(d) => deltas.push(d)
 		);
 		expect(deltas).toEqual(['a', 'b']);
@@ -46,7 +46,7 @@ describe('drainBuffer', () => {
 		const deltas: string[] = [];
 		const { leftover, done } = drainBuffer(
 			'data: {"choices":[{"delta":{"content":"x"}}]}\n',
-			'openrouter',
+			'openai',
 			(d) => deltas.push(d)
 		);
 		expect(deltas).toEqual(['x']);
@@ -58,7 +58,7 @@ describe('drainBuffer', () => {
 		const deltas: string[] = [];
 		const { leftover, done } = drainBuffer(
 			'data: {"choices":[{"delta":{"content":"x"}}]}',
-			'openrouter',
+			'openai',
 			(d) => deltas.push(d)
 		);
 		expect(deltas).toEqual([]);
@@ -68,7 +68,7 @@ describe('drainBuffer', () => {
 
 	it('skips marker lines without emitting', () => {
 		const deltas: string[] = [];
-		drainBuffer('data: [DONE]\ndata: {"choices":[{"delta":{"content":"z"}}]}\n', 'openrouter', (d) => deltas.push(d));
+		drainBuffer('data: [DONE]\ndata: {"choices":[{"delta":{"content":"z"}}]}\n', 'openai', (d) => deltas.push(d));
 		expect(deltas).toEqual(['z']);
 	});
 });

@@ -1,6 +1,8 @@
 import { App, PluginSettingTab, Setting, TFile, Notice } from 'obsidian';
 import LumosPlugin from './main';
 import { loginGoogle } from './googleAuth';
+import { ApiFormat, DEFAULT_BASE_URL, normalizeBaseUrl, isKnownDefaultBaseUrl, validateBaseUrl } from './llm/providerConfig';
+import { testProviderConnection } from './llm/transport';
 
 export class RelationSettingTab extends PluginSettingTab {
 	plugin: LumosPlugin;
@@ -16,40 +18,71 @@ export class RelationSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('LLM Provider')
-			.setDesc('Choose between local Ollama inference or OpenRouter API')
+			.setName('API Format')
+			.setDesc('Which wire protocol to speak. "OpenAI-compatible" covers OpenRouter, TokenRouter, LM Studio, vLLM, Groq and most hosted APIs — point the Base URL at whichever you use.')
 			.addDropdown(drop => drop
-				.addOption('ollama', 'Ollama (Local)')
-				.addOption('openrouter', 'OpenRouter (Cloud)')
-				.setValue(this.plugin.settings.provider)
-				.onChange(async (value: 'ollama' | 'openrouter') => {
-					this.plugin.settings.provider = value;
+				.addOption('ollama', 'Ollama (native API)')
+				.addOption('openai', 'OpenAI-compatible')
+				.setValue(this.plugin.settings.apiFormat)
+				.onChange(async (value: ApiFormat) => {
+					this.plugin.settings.apiFormat = value;
 					
-					// Set sane defaults when switching
-					if (value === 'ollama' && this.plugin.settings.baseUrl.includes('openrouter')) {
-						this.plugin.settings.baseUrl = 'http://localhost:11434';
-					} else if (value === 'openrouter' && this.plugin.settings.baseUrl.includes('localhost')) {
-						this.plugin.settings.baseUrl = 'https://openrouter.ai/api/v1';
+					// Swap in this format's default only when the URL is empty or
+					// still an untouched default; never clobber a custom endpoint.
+					if (!normalizeBaseUrl(this.plugin.settings.baseUrl) || isKnownDefaultBaseUrl(this.plugin.settings.baseUrl)) {
+						this.plugin.settings.baseUrl = DEFAULT_BASE_URL[value];
 					}
 					
 					await this.plugin.saveSettings();
 					this.display(); // re-render to show/hide API key
 				}));
 
-		new Setting(containerEl)
+		const baseUrlSetting = new Setting(containerEl)
 			.setName('Base URL')
-			.setDesc('The API endpoint for the provider')
+			.setDesc('Full base URL of the endpoint, including /v1 where the provider needs it. Any http(s) host is accepted — OpenRouter, TokenRouter, LM Studio, vLLM, a private gateway, or localhost.')
 			.addText(text => text
-				.setPlaceholder(this.plugin.settings.provider === 'ollama' ? 'http://localhost:11434' : 'https://openrouter.ai/api/v1')
+				.setPlaceholder(DEFAULT_BASE_URL[this.plugin.settings.apiFormat])
 				.setValue(this.plugin.settings.baseUrl)
 				.onChange(async (value) => {
 					this.plugin.settings.baseUrl = value;
 					await this.plugin.saveSettings();
+					renderBaseUrlFeedback();
+				}));
+
+		const baseUrlFeedbackEl = baseUrlSetting.descEl.createDiv({ cls: 'lumos-base-url-feedback' });
+		const renderBaseUrlFeedback = () => {
+			const result = validateBaseUrl(this.plugin.settings.baseUrl);
+			if (result.ok || !normalizeBaseUrl(this.plugin.settings.baseUrl)) {
+				baseUrlFeedbackEl.setText('');
+				baseUrlFeedbackEl.removeClass('mod-warning');
+				return;
+			}
+			baseUrlFeedbackEl.setText(result.error);
+			baseUrlFeedbackEl.addClass('mod-warning');
+		};
+		renderBaseUrlFeedback();
+
+		const connectionStatusEl = containerEl.createDiv({ cls: 'lumos-connection-status' });
+		new Setting(containerEl)
+			.setName('Test Connection')
+			.setDesc('Probe the endpoint with one lightweight request and report what happened — reachable, auth rejected, wrong path, and so on.')
+			.addButton(button => button
+				.setButtonText('Test connection')
+				.onClick(async () => {
+					const result = await testProviderConnection(this.plugin.settings);
+					connectionStatusEl.setText(result.message);
+					if (result.ok) {
+						connectionStatusEl.removeClass('mod-warning');
+						new Notice(result.message);
+					} else {
+						connectionStatusEl.addClass('mod-warning');
+						new Notice(`Lumos: ${result.message}`, 12000);
+					}
 				}));
 
 		new Setting(containerEl)
 			.setName('LLM Chat Model Name')
-			.setDesc(this.plugin.settings.provider === 'ollama' ? 'e.g., llama3, mistral' : 'e.g., openai/gpt-4o-mini, anthropic/claude-3-haiku')
+			.setDesc(this.plugin.settings.apiFormat === 'ollama' ? 'e.g., llama3, mistral' : 'e.g., openai/gpt-4o-mini, anthropic/claude-3-haiku')
 			.addText(text => text
 				.setPlaceholder('Enter model name')
 				.setValue(this.plugin.settings.llmModelName)
@@ -60,7 +93,7 @@ export class RelationSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Vision Model Name')
-			.setDesc(this.plugin.settings.provider === 'ollama' ? 'e.g., llava' : 'e.g., openai/gpt-4o, google/gemini-pro-vision')
+			.setDesc(this.plugin.settings.apiFormat === 'ollama' ? 'e.g., llava' : 'e.g., openai/gpt-4o, google/gemini-pro-vision')
 			.addText(text => text
 				.setPlaceholder('Enter vision model name')
 				.setValue(this.plugin.settings.visionModelName)
@@ -71,19 +104,19 @@ export class RelationSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Embedding Model Name')
-			.setDesc(this.plugin.settings.provider === 'ollama' ? 'e.g., nomic-embed-text' : 'e.g., openai/text-embedding-3-small')
+			.setDesc(this.plugin.settings.apiFormat === 'ollama' ? 'e.g., nomic-embed-text' : 'e.g., openai/text-embedding-3-small')
 			.addText(text => text
-				.setPlaceholder(this.plugin.settings.provider === 'ollama' ? 'nomic-embed-text' : 'openai/text-embedding-3-small')
+				.setPlaceholder(this.plugin.settings.apiFormat === 'ollama' ? 'nomic-embed-text' : 'openai/text-embedding-3-small')
 				.setValue(this.plugin.settings.embeddingModelName)
 				.onChange(async (value) => {
 					this.plugin.settings.embeddingModelName = value;
 					await this.plugin.saveSettings();
 				}));
 
-		if (this.plugin.settings.provider === 'openrouter') {
+		if (this.plugin.settings.apiFormat === 'openai') {
 			new Setting(containerEl)
 				.setName('API Key')
-				.setDesc('Your OpenRouter API Key')
+				.setDesc('Sent as `Authorization: Bearer <key>`. Leave blank for endpoints that need no auth (local gateways).')
 				.addText(text => text
 					.setPlaceholder('sk-or-v1-...')
 					.setValue(this.plugin.settings.apiKey || '')
